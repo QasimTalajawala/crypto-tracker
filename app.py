@@ -3,6 +3,7 @@ import requests
 import pandas as pd
 import numpy as np
 import json
+import os
 import time
 from datetime import datetime
 
@@ -10,42 +11,62 @@ st.set_page_config(page_title="Crypto Tracker", page_icon="📈", layout="wide")
 
 # ── Default Holdings ────────────────────────────────────────────────────────
 DEFAULT_HOLDINGS = {
-    # qty from screenshot; buy_price = screenshot value ÷ qty (price at time of screenshot)
-    "bitcoin":     {"symbol": "BTC",    "name": "Bitcoin",   "qty": 0.00477973,  "buy_price": round(356.08   / 0.00477973,  2)},   # ~$74,497
-    "solana":      {"symbol": "SOL",    "name": "Solana",    "qty": 1.20181095,  "buy_price": round(113.73   / 1.20181095,  2)},   # ~$94.63
-    "ethereum":    {"symbol": "ETH",    "name": "Ethereum",  "qty": 0.04647102,  "buy_price": round(108.00   / 0.04647102,  2)},   # ~$2,324
-    "bittensor":   {"symbol": "TAO",    "name": "Bittensor", "qty": 0.35218514,  "buy_price": round(99.42    / 0.35218514,  2)},   # ~$282
-    "chainlink":   {"symbol": "LINK",   "name": "ChainLink", "qty": 10.13085837, "buy_price": round(99.28    / 10.13085837, 2)},   # ~$9.80
-    "binancecoin": {"symbol": "BNB",    "name": "BNB",       "qty": 0.14611512,  "buy_price": round(98.10    / 0.14611512,  2)},   # ~$671
-    "render-token":{"symbol": "RENDER", "name": "Render",    "qty": 43.50722321, "buy_price": round(78.70    / 43.50722321, 2)},   # ~$1.81
+    "bitcoin":     {"symbol": "BTC",    "name": "Bitcoin",   "qty": 0.00477973,  "buy_price": round(356.08   / 0.00477973,  2)},
+    "solana":      {"symbol": "SOL",    "name": "Solana",    "qty": 1.20181095,  "buy_price": round(113.73   / 1.20181095,  2)},
+    "ethereum":    {"symbol": "ETH",    "name": "Ethereum",  "qty": 0.04647102,  "buy_price": round(108.00   / 0.04647102,  2)},
+    "bittensor":   {"symbol": "TAO",    "name": "Bittensor", "qty": 0.35218514,  "buy_price": round(99.42    / 0.35218514,  2)},
+    "chainlink":   {"symbol": "LINK",   "name": "ChainLink", "qty": 10.13085837, "buy_price": round(99.28    / 10.13085837, 2)},
+    "binancecoin": {"symbol": "BNB",    "name": "BNB",       "qty": 0.14611512,  "buy_price": round(98.10    / 0.14611512,  2)},
+    "render-token":{"symbol": "RENDER", "name": "Render",    "qty": 43.50722321, "buy_price": round(78.70    / 43.50722321, 2)},
 }
 
 COINGECKO_IDS = list(DEFAULT_HOLDINGS.keys())
+HOLDINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "holdings.json")
+
+# ── Holdings persistence ──────────────────────────────────────────────────────
+def load_holdings():
+    if os.path.exists(HOLDINGS_FILE):
+        try:
+            with open(HOLDINGS_FILE) as f:
+                saved = json.load(f)
+            # Start from defaults, overlay saved values
+            result = {cid: {**info} for cid, info in DEFAULT_HOLDINGS.items()}
+            for cid, h in saved.items():
+                if cid in result:
+                    result[cid].update(h)
+                else:
+                    result[cid] = h  # new coin not in defaults
+            return result
+        except Exception:
+            pass
+    return {cid: {**info} for cid, info in DEFAULT_HOLDINGS.items()}
+
+def save_holdings():
+    try:
+        with open(HOLDINGS_FILE, "w") as f:
+            json.dump(st.session_state.holdings, f, indent=2)
+    except Exception:
+        pass  # Streamlit Cloud has no write access — silent fail
 
 # ── Session state init ───────────────────────────────────────────────────────
 if "holdings" not in st.session_state:
-    st.session_state.holdings = {
-        cid: {**info}
-        for cid, info in DEFAULT_HOLDINGS.items()
-    }
+    st.session_state.holdings = load_holdings()
 if "watchlist" not in st.session_state:
     st.session_state.watchlist = []
 
 # ── API helpers ──────────────────────────────────────────────────────────────
-def _get_with_retry(url: str, timeout: int = 10, retries: int = 3) -> requests.Response:
-    """GET with exponential backoff on 429 rate-limit responses."""
+def _get_with_retry(url, timeout=10, retries=3):
     for attempt in range(retries):
         r = requests.get(url, timeout=timeout)
         if r.status_code == 429:
-            wait = 2 ** attempt  # 1s, 2s, 4s
-            time.sleep(wait)
+            time.sleep(2 ** attempt)
             continue
         r.raise_for_status()
         return r
-    r.raise_for_status()  # raise after all retries exhausted
+    r.raise_for_status()
     return r
 
-@st.cache_data(ttl=600)   # 10-min cache — reduces calls by 2×
+@st.cache_data(ttl=600)
 def fetch_market_data(coin_ids: tuple):
     ids_str = ",".join(coin_ids)
     url = (
@@ -58,11 +79,10 @@ def fetch_market_data(coin_ids: tuple):
         r = _get_with_retry(url)
         return {c["id"]: c for c in r.json()}
     except Exception:
-        return None  # None = use stale cache
+        return None
 
-@st.cache_data(ttl=7200)  # 2-hour cache for RSI (daily data, changes slowly)
+@st.cache_data(ttl=7200)
 def fetch_rsi(coin_id: str, days: int = 30):
-    """Fetch 30-day daily closes and compute 14-day RSI."""
     url = (
         f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"
         f"?vs_currency=usd&days={days}&interval=daily"
@@ -74,10 +94,10 @@ def fetch_rsi(coin_id: str, days: int = 30):
             return None
         closes = pd.Series(prices)
         delta = closes.diff()
-        gain = delta.clip(lower=0).rolling(14).mean()
-        loss = (-delta.clip(upper=0)).rolling(14).mean()
-        rs = gain / loss.replace(0, np.nan)
-        rsi = 100 - (100 / (1 + rs))
+        gain  = delta.clip(lower=0).rolling(14).mean()
+        loss  = (-delta.clip(upper=0)).rolling(14).mean()
+        rs    = gain / loss.replace(0, np.nan)
+        rsi   = 100 - (100 / (1 + rs))
         return round(float(rsi.iloc[-1]), 1)
     except Exception:
         return None
@@ -103,118 +123,123 @@ def search_coin(query: str):
 
 # ── Formatting helpers ────────────────────────────────────────────────────────
 def fmt_price(p):
-    """Smart price: no trailing zeros, right number of decimals for the magnitude."""
-    if p is None or p == 0:
-        return "—"
-    if p >= 1_000:
-        return f"${p:,.0f}"
-    if p >= 1:
-        return f"${p:,.2f}"
-    if p >= 0.01:
-        return f"${p:.4f}"
+    if p is None or p == 0: return "—"
+    if p >= 1_000:  return f"${p:,.0f}"
+    if p >= 1:      return f"${p:,.2f}"
+    if p >= 0.01:   return f"${p:.4f}"
     return f"${p:.6f}"
 
 def fmt_qty(q):
-    """Show quantity with up to 6 significant figures, no trailing zeros."""
-    if q is None:
-        return "—"
+    if q is None: return "—"
     return f"{q:.6g}"
 
 # ── Signal logic ─────────────────────────────────────────────────────────────
 def score_to_label(score):
-    if score >= 4:   return "Strong Buy",       "🟢"
-    if score >= 2:   return "Buy",               "🟩"
-    if score >= 0:   return "Hold",              "🟡"
-    if score >= -3:  return "Caution",           "🟠"
-    return               "Consider Selling",     "🔴"
+    if score >= 4:  return "Strong Buy",      "🟢"
+    if score >= 2:  return "Buy",              "🟩"
+    if score >= 0:  return "Hold",             "🟡"
+    if score >= -3: return "Caution",          "🟠"
+    return              "Consider Selling",    "🔴"
 
 def compute_signal(rsi, fg_value, price_vs_ath_pct, price_change_30d, pnl_pct,
                    market_cap=None, vol_mcap_pct=None):
-    """
-    Returns (label_string, reasons_list, raw_score).
-    Price signals  (max +7 / min -6)
-    Fundamental signals  (max +2 / min -2)
-    """
     score = 0
     price_reasons = []
     fund_reasons  = []
 
-    # ── Price signals ──────────────────────────────────────────────────────
     if rsi is not None:
-        if rsi < 30:
-            score += 2; price_reasons.append(f"RSI {rsi} — oversold (buy zone)")
-        elif rsi < 40:
-            score += 1; price_reasons.append(f"RSI {rsi} — leaning oversold")
-        elif rsi > 70:
-            score -= 2; price_reasons.append(f"RSI {rsi} — overbought (sell zone)")
-        elif rsi > 60:
-            score -= 1; price_reasons.append(f"RSI {rsi} — leaning overbought")
+        if rsi < 30:    score += 2; price_reasons.append(f"RSI {rsi} — oversold (buy zone)")
+        elif rsi < 40:  score += 1; price_reasons.append(f"RSI {rsi} — leaning oversold")
+        elif rsi > 70:  score -= 2; price_reasons.append(f"RSI {rsi} — overbought (sell zone)")
+        elif rsi > 60:  score -= 1; price_reasons.append(f"RSI {rsi} — leaning overbought")
 
     if fg_value is not None:
-        if fg_value < 25:
-            score += 2; price_reasons.append(f"Fear & Greed {fg_value} — extreme fear (buy zone)")
-        elif fg_value < 40:
-            score += 1; price_reasons.append(f"Fear & Greed {fg_value} — fear")
-        elif fg_value > 75:
-            score -= 2; price_reasons.append(f"Fear & Greed {fg_value} — extreme greed (sell zone)")
-        elif fg_value > 60:
-            score -= 1; price_reasons.append(f"Fear & Greed {fg_value} — greed")
+        if fg_value < 25:   score += 2; price_reasons.append(f"Fear & Greed {fg_value} — extreme fear (buy zone)")
+        elif fg_value < 40: score += 1; price_reasons.append(f"Fear & Greed {fg_value} — fear")
+        elif fg_value > 75: score -= 2; price_reasons.append(f"Fear & Greed {fg_value} — extreme greed (sell zone)")
+        elif fg_value > 60: score -= 1; price_reasons.append(f"Fear & Greed {fg_value} — greed")
 
     if price_vs_ath_pct is not None:
-        if price_vs_ath_pct <= -70:
-            score += 2; price_reasons.append(f"{abs(price_vs_ath_pct):.0f}% below ATH — historically cheap")
-        elif price_vs_ath_pct <= -50:
-            score += 1; price_reasons.append(f"{abs(price_vs_ath_pct):.0f}% below ATH — discounted")
-        elif price_vs_ath_pct >= -10:
-            score -= 1; price_reasons.append(f"Near ATH — limited upside at current price")
+        if price_vs_ath_pct <= -70:   score += 2; price_reasons.append(f"{abs(price_vs_ath_pct):.0f}% below ATH — historically cheap")
+        elif price_vs_ath_pct <= -50: score += 1; price_reasons.append(f"{abs(price_vs_ath_pct):.0f}% below ATH — discounted")
+        elif price_vs_ath_pct >= -10: score -= 1; price_reasons.append("Near ATH — limited upside at current price")
 
     if price_change_30d is not None:
-        if price_change_30d < -25:
-            score += 1; price_reasons.append(f"Down {abs(price_change_30d):.0f}% in 30d — potential dip entry")
-        elif price_change_30d > 30:
-            score -= 1; price_reasons.append(f"Up {price_change_30d:.0f}% in 30d — short-term momentum high")
+        if price_change_30d < -25:  score += 1; price_reasons.append(f"Down {abs(price_change_30d):.0f}% in 30d — potential dip entry")
+        elif price_change_30d > 30: score -= 1; price_reasons.append(f"Up {price_change_30d:.0f}% in 30d — short-term momentum high")
 
     if pnl_pct is not None and pnl_pct > 50:
-        score -= 1; price_reasons.append(f"Up {pnl_pct:.0f}% from your buy price — consider taking partial profit")
+        score -= 1; price_reasons.append(f"Up {pnl_pct:.0f}% from your buy — consider partial profit")
 
-    # ── Fundamental signals ────────────────────────────────────────────────
     if market_cap is not None:
-        if market_cap >= 10_000_000_000:
-            score += 1; fund_reasons.append("Large cap (>$10B) — established, lower risk")
-        elif market_cap >= 1_000_000_000:
-            pass  # mid cap: neutral
-        elif market_cap < 500_000_000:
-            score -= 1; fund_reasons.append("Small/micro cap (<$500M) — higher risk, higher volatility")
+        if market_cap >= 10_000_000_000:  score += 1; fund_reasons.append("Large cap (>$10B) — established, lower risk")
+        elif market_cap < 500_000_000:    score -= 1; fund_reasons.append("Small/micro cap (<$500M) — higher risk")
 
     if vol_mcap_pct is not None:
-        if vol_mcap_pct >= 5:
-            score += 1; fund_reasons.append(f"Vol/MCap {vol_mcap_pct:.1f}% — strong liquidity")
-        elif vol_mcap_pct < 1:
-            score -= 1; fund_reasons.append(f"Vol/MCap {vol_mcap_pct:.1f}% — low liquidity, harder to exit")
+        if vol_mcap_pct >= 5:   score += 1; fund_reasons.append(f"Vol/MCap {vol_mcap_pct:.1f}% — strong liquidity")
+        elif vol_mcap_pct < 1:  score -= 1; fund_reasons.append(f"Vol/MCap {vol_mcap_pct:.1f}% — low liquidity")
 
     label, color = score_to_label(score)
-    reasons = price_reasons + fund_reasons
-    return f"{color} {label}", reasons, score
+    return f"{color} {label}", price_reasons + fund_reasons, score
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.title("📈 Crypto Tracker")
-    st.caption("Prices refresh every 5 min")
 
-    st.subheader("Your Buy Prices")
-    for cid, info in st.session_state.holdings.items():
-        bp = st.number_input(
-            f"{info['symbol']} buy price (USD)",
-            min_value=0.0,
-            value=float(info["buy_price"]),
-            format="%.2f",
-            key=f"bp_{cid}",
-        )
-        st.session_state.holdings[cid]["buy_price"] = bp
+    # ── Section 1: Log a purchase ────────────────────────────────────────
+    st.subheader("➕ Log a Purchase")
+    st.caption("Add a new buy — qty and avg price update automatically.")
+
+    holding_options = {
+        info["name"]: cid
+        for cid, info in st.session_state.holdings.items()
+    }
+    selected_name = st.selectbox("Coin", list(holding_options.keys()), key="buy_coin")
+    selected_cid  = holding_options[selected_name]
+
+    col_q, col_p = st.columns(2)
+    new_qty   = col_q.number_input("Qty bought", min_value=0.0, value=0.0, format="%.6f", key="new_qty")
+    new_price = col_p.number_input("Price paid ($)", min_value=0.0, value=0.0, format="%.2f", key="new_price")
+
+    if st.button("✅ Add to Portfolio", use_container_width=True):
+        if new_qty > 0 and new_price > 0:
+            h = st.session_state.holdings[selected_cid]
+            old_qty   = h["qty"]
+            old_price = h["buy_price"]
+            total_qty = old_qty + new_qty
+            # Weighted average buy price
+            avg_price = (old_qty * old_price + new_qty * new_price) / total_qty
+            st.session_state.holdings[selected_cid]["qty"]       = round(total_qty, 8)
+            st.session_state.holdings[selected_cid]["buy_price"] = round(avg_price, 2)
+            save_holdings()
+            st.success(f"Added {fmt_qty(new_qty)} {h['symbol']} @ {fmt_price(new_price)}. New avg: {fmt_price(avg_price)}")
+            st.rerun()
+        else:
+            st.warning("Enter qty and price > 0")
 
     st.divider()
-    st.subheader("Add to Watchlist")
-    wl_query = st.text_input("Search coin", placeholder="e.g. Pepe")
+
+    # ── Section 2: Edit buy prices ───────────────────────────────────────
+    with st.expander("✏️ Edit Buy Prices / Qty", expanded=False):
+        st.caption("Manually adjust any holding. Changes save automatically.")
+        for cid, info in st.session_state.holdings.items():
+            st.markdown(f"**{info['symbol']}**")
+            c1, c2 = st.columns(2)
+            new_q = c1.number_input("Qty", min_value=0.0, value=float(info["qty"]),
+                                    format="%.6f", key=f"eq_{cid}")
+            new_b = c2.number_input("Avg buy $", min_value=0.0, value=float(info["buy_price"]),
+                                    format="%.2f", key=f"eb_{cid}")
+            if new_q != info["qty"] or new_b != info["buy_price"]:
+                st.session_state.holdings[cid]["qty"]       = new_q
+                st.session_state.holdings[cid]["buy_price"] = new_b
+                save_holdings()
+
+    st.divider()
+
+    # ── Section 3: Watchlist ─────────────────────────────────────────────
+    st.subheader("👀 Watchlist")
+    st.caption("Track coins you don't own yet.")
+    wl_query = st.text_input("Search coin", placeholder="e.g. Pepe", key="wl_search")
     if wl_query:
         results = search_coin(wl_query)
         for coin in results:
@@ -224,45 +249,49 @@ with st.sidebar:
                     st.rerun()
 
     if st.session_state.watchlist:
-        st.caption("Watching:")
         for wid in st.session_state.watchlist:
-            col1, col2 = st.columns([3, 1])
-            col1.write(wid)
-            if col2.button("✕", key=f"rm_{wid}"):
+            # Show name from market data if available, else ID
+            wname = st.session_state.get("last_market", {}).get(wid, {}).get("name", wid)
+            wsym  = st.session_state.get("last_market", {}).get(wid, {}).get("symbol", "").upper()
+            label = f"{wname} ({wsym})" if wsym else wname
+            c1, c2 = st.columns([4, 1])
+            c1.caption(label)
+            if c2.button("✕", key=f"rm_{wid}"):
                 st.session_state.watchlist.remove(wid)
                 st.rerun()
 
 # ── Fetch data ────────────────────────────────────────────────────────────────
-all_ids = tuple(COINGECKO_IDS + st.session_state.watchlist)
+all_ids = tuple(list(st.session_state.holdings.keys()) + st.session_state.watchlist)
 market_result = fetch_market_data(all_ids)
 if market_result is not None:
-    st.session_state["last_market"] = market_result  # save last good data
+    st.session_state["last_market"] = market_result
 market = st.session_state.get("last_market", {})
 if market_result is None:
-    st.warning("⚠️ CoinGecko rate limit — showing last known prices. Auto-refreshes in ~10 min.", icon="⏳")
+    st.warning("⚠️ CoinGecko rate limit — showing last known prices. Refreshes in ~10 min.", icon="⏳")
 fg_value, fg_label = fetch_fear_greed()
 
-# ── Pre-compute all coin metrics (used by Analysis + Signals tabs) ────────────
+# ── Pre-compute all coin metrics ──────────────────────────────────────────────
 coin_metrics = {}
 for cid, info in st.session_state.holdings.items():
-    md = market.get(cid, {})
-    cp          = md.get("current_price", 0)
-    ath         = md.get("ath", 0)
-    market_cap  = md.get("market_cap", 0)
-    volume_24h  = md.get("total_volume", 0)
-    vol_mcap    = (volume_24h / market_cap * 100) if market_cap else None
-    ath_pct     = ((cp - ath) / ath * 100) if ath else None
-    ch30        = md.get("price_change_percentage_30d_in_currency")
-    bp          = info["buy_price"]
-    pnl_pct     = ((cp - bp) / bp * 100) if bp > 0 and cp else None
-    rsi         = fetch_rsi(cid)
+    md         = market.get(cid, {})
+    cp         = md.get("current_price", 0)
+    ath        = md.get("ath", 0)
+    mcap       = md.get("market_cap", 0)
+    vol        = md.get("total_volume", 0)
+    vol_mcap   = (vol / mcap * 100) if mcap else None
+    ath_pct    = ((cp - ath) / ath * 100) if ath else None
+    ch30       = md.get("price_change_percentage_30d_in_currency")
+    bp         = info["buy_price"]
+    pnl_pct    = ((cp - bp) / bp * 100) if bp > 0 and cp else None
+    rsi        = fetch_rsi(cid)
     signal, reasons, score = compute_signal(
-        rsi, fg_value, ath_pct, ch30, pnl_pct, market_cap, vol_mcap
+        rsi, fg_value, ath_pct, ch30, pnl_pct, mcap, vol_mcap
     )
     coin_metrics[cid] = dict(
-        info=info, md=md, cp=cp, ath=ath, market_cap=market_cap,
+        info=info, md=md, cp=cp, ath=ath, mcap=mcap,
         vol_mcap=vol_mcap, ath_pct=ath_pct, ch30=ch30,
-        pnl_pct=pnl_pct, rsi=rsi, signal=signal, reasons=reasons, score=score
+        pnl_pct=pnl_pct, rsi=rsi, signal=signal, reasons=reasons, score=score,
+        value=info["qty"] * cp
     )
 
 tab0, tab1, tab2, tab3, tab4 = st.tabs(
@@ -274,72 +303,122 @@ tab0, tab1, tab2, tab3, tab4 = st.tabs(
 # ══════════════════════════════════════════════════════════════════════════════
 with tab0:
     st.header("🎯 Overall Analysis")
-    st.caption("Combined rating using price signals (RSI, momentum, ATH distance) + fundamentals (market cap, liquidity).")
+    st.caption("Combined score: price signals (RSI, ATH distance, momentum) + fundamentals (market cap, liquidity).")
 
-    # ── Overall portfolio score ────────────────────────────────────────────
-    scores = [m["score"] for m in coin_metrics.values()]
+    scores    = [m["score"] for m in coin_metrics.values()]
     avg_score = sum(scores) / len(scores) if scores else 0
     port_label, port_color = score_to_label(round(avg_score))
 
-    buys      = sum(1 for s in scores if s >= 2)
-    holds     = sum(1 for s in scores if -1 <= s < 2)
-    cautions  = sum(1 for s in scores if s < -1)
+    buys     = sum(1 for s in scores if s >= 2)
+    holds    = sum(1 for s in scores if 0 <= s < 2)
+    cautions = sum(1 for s in scores if s < 0)
 
-    # Overall verdict banner
-    fg_sentiment = ""
+    fg_sentiment = {
+        True:  ("Market is in **Extreme Fear** — historically a good time to accumulate.", fg_value < 25 if fg_value else False),
+    }
     if fg_value is not None:
-        if fg_value < 25:   fg_sentiment = "Market is in **Extreme Fear** — historically a good time to accumulate."
-        elif fg_value < 40: fg_sentiment = "Market is in **Fear** — cautious accumulation may be appropriate."
-        elif fg_value < 60: fg_sentiment = "Market is **Neutral** — no strong macro signal either way."
-        elif fg_value < 75: fg_sentiment = "Market is in **Greed** — be selective, avoid chasing pumps."
-        else:               fg_sentiment = "Market is in **Extreme Greed** — consider reducing exposure."
+        if fg_value < 25:   fg_sent = "Market is in **Extreme Fear** — historically a good time to accumulate."
+        elif fg_value < 40: fg_sent = "Market is in **Fear** — cautious accumulation may be appropriate."
+        elif fg_value < 60: fg_sent = "Market is **Neutral** — no strong macro signal either way."
+        elif fg_value < 75: fg_sent = "Market is in **Greed** — be selective, avoid chasing pumps."
+        else:               fg_sent = "Market is in **Extreme Greed** — consider reducing exposure."
+    else:
+        fg_sent = ""
 
-    verdict_bg = {"Strong Buy":"#1a3a1a","Buy":"#1a2e1a","Hold":"#2e2a1a",
-                  "Caution":"#2e1f0a","Consider Selling":"#2e0a0a"}
+    verdict_bg = {"Strong Buy": "#1a3a1a", "Buy": "#1a2e1a", "Hold": "#2e2a1a",
+                  "Caution": "#2e1f0a", "Consider Selling": "#2e0a0a"}
     bg = verdict_bg.get(port_label, "#1a1a1a")
 
     st.markdown(
         f"""<div style="background:{bg};border-radius:12px;padding:20px 24px;margin-bottom:16px">
         <div style="font-size:2rem;font-weight:700">{port_color} Portfolio Verdict: {port_label}</div>
-        <div style="color:#aaa;margin-top:6px">Average signal score: <b>{avg_score:+.1f}</b> across {len(scores)} coins
-        &nbsp;·&nbsp; {fg_sentiment}</div>
-        </div>""",
+        <div style="color:#aaa;margin-top:6px">Average score: <b>{avg_score:+.1f}</b> across {len(scores)} coins
+        &nbsp;·&nbsp; {fg_sent}</div></div>""",
         unsafe_allow_html=True
     )
 
-    # Breakdown KPIs
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Coins to Buy",    buys,     help="Score ≥ 2")
-    k2.metric("Coins to Hold",   holds,    help="Score −1 to +1")
-    k3.metric("Coins to Caution",cautions, help="Score < −1")
-    k4.metric("Fear & Greed",    f"{fg_value} — {fg_label}" if fg_value else "—")
+    k1.metric("Coins to Buy",     buys,     help="Score ≥ 2")
+    k2.metric("Coins to Hold",    holds,    help="Score 0–1")
+    k3.metric("Coins to Caution", cautions, help="Score < 0")
+    k4.metric("Fear & Greed", f"{fg_value} — {fg_label}" if fg_value else "—")
 
     st.divider()
 
-    # ── Per-coin summary table ─────────────────────────────────────────────
+    # ── Per-coin rating table ──────────────────────────────────────────────
     st.subheader("Per-Coin Rating")
     rows_a = []
     for cid, m in coin_metrics.items():
         rows_a.append({
-            "Coin":        f"{m['info']['name']} ({m['info']['symbol']})",
-            "Price":       fmt_price(m["cp"]),
-            "RSI":         f"{m['rsi']}" if m["rsi"] else "—",
-            "From ATH":    f"{m['ath_pct']:.0f}%" if m["ath_pct"] else "—",
-            "30d %":       f"{m['ch30']:+.1f}%" if m["ch30"] else "—",
-            "P&L %":       f"{m['pnl_pct']:+.1f}%" if m["pnl_pct"] is not None else "—",
-            "Score":       f"{m['score']:+d}",
-            "Rating":      m["signal"],
+            "Coin":     f"{m['info']['name']} ({m['info']['symbol']})",
+            "Price":    fmt_price(m["cp"]),
+            "RSI":      f"{m['rsi']}" if m["rsi"] else "—",
+            "From ATH": f"{m['ath_pct']:.0f}%" if m["ath_pct"] else "—",
+            "30d %":    f"{m['ch30']:+.1f}%" if m["ch30"] else "—",
+            "P&L %":    f"{m['pnl_pct']:+.1f}%" if m["pnl_pct"] is not None else "—",
+            "Score":    f"{m['score']:+d}",
+            "Rating":   m["signal"],
         })
     st.dataframe(pd.DataFrame(rows_a), use_container_width=True, hide_index=True)
 
-    # ── Key insights ───────────────────────────────────────────────────────
     st.divider()
+
+    # ── Investment allocator ───────────────────────────────────────────────
+    st.subheader("💡 How Should I Allocate My Next Buy?")
+    st.caption("Score-weighted allocation across coins rated Buy or above. Adjust the amount to see suggested split.")
+
+    invest_amt = st.number_input("Amount I want to invest ($)", min_value=0.0,
+                                 value=500.0, step=100.0, format="%.0f")
+
+    buyable = {cid: m for cid, m in coin_metrics.items() if m["score"] >= 2}
+
+    if not buyable:
+        st.info("No coins currently rated Buy or above. Consider waiting for better entry conditions.")
+    else:
+        # Weights proportional to score (min score shifted to 1)
+        min_score  = min(m["score"] for m in buyable.values())
+        shift      = max(0, 1 - min_score)
+        raw_weights = {cid: m["score"] + shift for cid, m in buyable.items()}
+        total_w    = sum(raw_weights.values())
+        alloc_rows = []
+        # Build ratio string: normalize relative to lowest weight
+        min_w = min(raw_weights.values())
+        for cid, w in raw_weights.items():
+            m       = buyable[cid]
+            pct     = w / total_w
+            dollars = invest_amt * pct
+            ratio   = round(w / min_w, 1)
+            alloc_rows.append({
+                "Coin":       f"{m['info']['name']} ({m['info']['symbol']})",
+                "Rating":     m["signal"],
+                "Score":      f"{m['score']:+d}",
+                "Weight":     f"{pct*100:.0f}%",
+                "Suggested $":f"${dollars:,.0f}",
+                "Est. Qty":   fmt_qty(dollars / m["cp"]) if m["cp"] else "—",
+                "Ratio":      f"{ratio:.1g}x",
+            })
+        st.dataframe(pd.DataFrame(alloc_rows), use_container_width=True, hide_index=True)
+
+        # Ratio string e.g. "BTC : ETH : SOL = 2 : 1.5 : 1"
+        ratio_parts = [
+            f"{buyable[cid]['info']['symbol']} {round(raw_weights[cid]/min_w, 1):.1g}"
+            for cid in buyable
+        ]
+        st.caption(f"Suggested ratio: **{' : '.join(ratio_parts)}**  (based on signal scores)")
+
+        if avg_score >= 2:
+            st.caption("💬 Buying conditions are positive. You can deploy the full amount or split into 2–3 entries (DCA).")
+        else:
+            st.caption("💬 Mixed market conditions. Consider splitting into smaller entries over time rather than one lump sum.")
+
+    st.divider()
+
+    # ── Key insights ───────────────────────────────────────────────────────
     st.subheader("Key Insights")
 
-    # Best opportunity (highest score)
     best = max(coin_metrics.items(), key=lambda x: x[1]["score"])
     worst = min(coin_metrics.items(), key=lambda x: x[1]["score"])
-    most_discounted = min(
+    most_disc = min(
         ((cid, m) for cid, m in coin_metrics.items() if m["ath_pct"] is not None),
         key=lambda x: x[1]["ath_pct"], default=None
     )
@@ -348,26 +427,24 @@ with tab0:
     insights.append(f"**Best opportunity:** {best[1]['info']['name']} ({best[1]['info']['symbol']}) — score {best[1]['score']:+d}, rated {best[1]['signal']}")
     if worst[1]["score"] < 0:
         insights.append(f"**Most cautious:** {worst[1]['info']['name']} ({worst[1]['info']['symbol']}) — score {worst[1]['score']:+d}, rated {worst[1]['signal']}")
-    if most_discounted:
-        cid, m = most_discounted
-        insights.append(f"**Most discounted from ATH:** {m['info']['name']} ({m['info']['symbol']}) at {m['ath_pct']:.0f}% below its all-time high of {fmt_price(m['ath'])}")
-
-    # Portfolio-level narrative
+    if most_disc:
+        cid, m = most_disc
+        insights.append(f"**Most discounted:** {m['info']['name']} ({m['info']['symbol']}) is {m['ath_pct']:.0f}% below its ATH of {fmt_price(m['ath'])}")
     if avg_score >= 3:
-        insights.append("**Overall:** Strong buying conditions across the portfolio. Consider adding to positions if you have available capital.")
+        insights.append("**Overall:** Strong buying conditions. Consider adding to positions if capital is available.")
     elif avg_score >= 1:
-        insights.append("**Overall:** Mild buying conditions. Gradual accumulation (DCA) may be appropriate rather than a lump-sum entry.")
+        insights.append("**Overall:** Mild buying conditions. DCA (spreading buys over time) is a prudent approach.")
     elif avg_score >= -1:
-        insights.append("**Overall:** Mixed signals. Hold current positions and wait for a clearer direction before adding.")
+        insights.append("**Overall:** Mixed signals. Hold current positions and wait for a clearer direction.")
     elif avg_score >= -3:
-        insights.append("**Overall:** Caution warranted. Review positions — consider whether any have exceeded your risk tolerance.")
+        insights.append("**Overall:** Caution warranted. Review positions and risk tolerance before adding.")
     else:
-        insights.append("**Overall:** Bearish signals across most coins. Review your risk exposure and consider whether to reduce positions.")
+        insights.append("**Overall:** Bearish signals. Consider reducing exposure if you're uncomfortable with current volatility.")
 
     for ins in insights:
         st.markdown(f"- {ins}")
 
-    st.caption("⚠️ This is not financial advice. Always do your own research before making investment decisions.")
+    st.caption("⚠️ Not financial advice. Always do your own research before making investment decisions.")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 1: PORTFOLIO
@@ -376,86 +453,80 @@ with tab1:
     st.header("💼 Portfolio")
 
     if fg_value:
-        fg_color = (
-            "🟢" if fg_value < 25 else
-            "🟡" if fg_value < 50 else
-            "🟠" if fg_value < 75 else "🔴"
-        )
-        st.info(f"**Market Sentiment:** {fg_color} Fear & Greed Index = **{fg_value}** ({fg_label})")
+        fg_color = "🟢" if fg_value < 25 else "🟡" if fg_value < 50 else "🟠" if fg_value < 75 else "🔴"
+        st.info(f"**Market Sentiment:** {fg_color} Fear & Greed = **{fg_value}** ({fg_label})")
 
     rows = []
-    total_value = 0.0
-    total_cost = 0.0
+    total_value = total_cost = 0.0
 
     for cid, info in st.session_state.holdings.items():
-        md = market.get(cid, {})
-        current_price = md.get("current_price", 0)
-        qty = info["qty"]
-        buy_price = info["buy_price"]
-        value = qty * current_price
-        cost = qty * buy_price if buy_price > 0 else None
-        pnl = value - cost if cost else None
-        pnl_pct = (pnl / cost * 100) if cost else None
-
+        md         = market.get(cid, {})
+        cp         = md.get("current_price", 0)
+        qty        = info["qty"]
+        bp         = info["buy_price"]
+        value      = qty * cp
+        cost       = qty * bp if bp > 0 else None
+        pnl        = value - cost if cost else None
+        pnl_pct    = (pnl / cost * 100) if cost else None
         total_value += value
-        if cost:
-            total_cost += cost
-
+        if cost: total_cost += cost
         rows.append({
-            "Coin": f"{info['name']} ({info['symbol']})",
-            "Qty": fmt_qty(qty),
-            "Buy Price": fmt_price(buy_price) if buy_price > 0 else "—",
-            "Current Price": fmt_price(current_price),
-            "Value": f"${value:,.2f}",
-            "P&L $": f"${pnl:+,.2f}" if pnl is not None else "—",
-            "P&L %": f"{pnl_pct:+.1f}%" if pnl_pct is not None else "—",
+            "Coin":          f"{info['name']} ({info['symbol']})",
+            "Qty":           fmt_qty(qty),
+            "Avg Buy Price": fmt_price(bp) if bp > 0 else "—",
+            "Current Price": fmt_price(cp),
+            "Value":         f"${value:,.2f}",
+            "P&L $":         f"${pnl:+,.2f}" if pnl is not None else "—",
+            "P&L %":         f"{pnl_pct:+.1f}%" if pnl_pct is not None else "—",
         })
 
-    df = pd.DataFrame(rows)
-
-    # KPIs
     k1, k2, k3 = st.columns(3)
-    k1.metric("Total Portfolio Value", f"${total_value:,.2f}")
+    k1.metric("Total Value", f"${total_value:,.2f}")
     if total_cost > 0:
         total_pnl = total_value - total_cost
-        total_pnl_pct = total_pnl / total_cost * 100
         k2.metric("Total Cost Basis", f"${total_cost:,.2f}")
-        k3.metric("Total P&L", f"${total_pnl:+,.2f}", delta=f"{total_pnl_pct:+.1f}%")
+        k3.metric("Total P&L", f"${total_pnl:+,.2f}", delta=f"{total_pnl/total_cost*100:+.1f}%")
 
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
-    # Allocation pie
-    st.subheader("Allocation")
+    st.subheader("Allocation by Value")
     alloc = {
-        st.session_state.holdings[cid]["symbol"]: market.get(cid, {}).get("current_price", 0) * info["qty"]
-        for cid, info in st.session_state.holdings.items()
+        st.session_state.holdings[cid]["symbol"]: coin_metrics[cid]["value"]
+        for cid in st.session_state.holdings
+        if cid in coin_metrics and coin_metrics[cid]["value"] > 0
     }
-    alloc_df = pd.DataFrame({"Coin": list(alloc.keys()), "Value": list(alloc.values())})
-    alloc_df = alloc_df[alloc_df["Value"] > 0]
-    st.bar_chart(alloc_df.set_index("Coin"))
+    if alloc:
+        alloc_df = pd.DataFrame({"Coin": list(alloc.keys()), "Value ($)": list(alloc.values())})
+        st.bar_chart(alloc_df.set_index("Coin"))
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 2: SIGNALS
 # ══════════════════════════════════════════════════════════════════════════════
 with tab2:
     st.header("🚦 Buy / Sell Signals")
-    st.caption("Based on RSI, Fear & Greed Index, distance from ATH, and 30-day momentum.")
+    st.caption("Expand any coin to see the detailed factors behind its rating.")
 
     if fg_value:
-        st.info(f"**Fear & Greed Index: {fg_value} — {fg_label}**  |  <25 = buy zone · >75 = sell zone")
+        st.info(f"**Fear & Greed: {fg_value} — {fg_label}** · <25 = buy zone · >75 = sell zone")
+
+    # Quick summary row
+    sig_rows = []
+    for cid, m in coin_metrics.items():
+        sig_rows.append({"Coin": f"{m['info']['symbol']}", "Rating": m["signal"], "Score": f"{m['score']:+d}"})
+    st.dataframe(pd.DataFrame(sig_rows), use_container_width=True, hide_index=True)
+    st.divider()
 
     for cid, m in coin_metrics.items():
         info = m["info"]
-        with st.expander(f"**{info['name']} ({info['symbol']})** — {m['signal']}  (score {m['score']:+d})", expanded=True):
+        with st.expander(f"{info['name']} ({info['symbol']}) — {m['signal']}  (score {m['score']:+d})", expanded=False):
             c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Current Price", fmt_price(m["cp"]))
+            c1.metric("Price", fmt_price(m["cp"]))
             c2.metric("RSI (14d)", f"{m['rsi']}" if m["rsi"] else "—",
-                      help="<30 oversold (buy) · >70 overbought (sell)")
+                      help="<30 oversold · >70 overbought")
             c3.metric("From ATH", f"{m['ath_pct']:.1f}%" if m["ath_pct"] else "—")
             c4.metric("30d Change", f"{m['ch30']:+.1f}%" if m["ch30"] else "—")
-
             if m["reasons"]:
-                st.write("**Factors:**")
+                st.write("**Factors driving this rating:**")
                 for r in m["reasons"]:
                     st.write(f"  • {r}")
             else:
@@ -466,58 +537,46 @@ with tab2:
 # ══════════════════════════════════════════════════════════════════════════════
 with tab3:
     st.header("📊 Fundamentals")
-    st.caption("Key on-chain and market metrics to assess each coin's health.")
+    st.caption("Key market metrics to assess each coin's size, liquidity and valuation.")
 
     with st.expander("📖 How to read these metrics", expanded=False):
         st.markdown("""
 | Metric | Good sign | Red flag |
 |---|---|---|
 | **Market Cap** | >$10B (large cap = stable) | <$100M (micro cap = risky) |
-| **24h Volume / Market Cap** | >3% (active, liquid) | <0.5% (illiquid) |
-| **% from ATH** | -50% to -80% (historically cheap) | Near 0% (near peak) |
-| **7d Change** | Moderate positive | Extreme >50% (FOMO) |
-| **30d Change** | Positive trend | Extreme negative (collapse) |
-| **RSI** | 30–50 (healthy) | <20 or >80 (extremes) |
+| **Vol/MCap %** | >3% (active, liquid) | <0.5% (illiquid, hard to exit) |
+| **From ATH** | −50% to −80% (historically cheap) | Near 0% (near peak) |
+| **7d / 30d %** | Moderate positive | Extreme >50% (FOMO) or deep negative |
+| **RSI** | 30–50 (healthy zone) | <20 or >80 (extremes) |
 """)
 
+    def mcap_label(mc):
+        if mc >= 10_000_000_000: return f"${mc/1e9:.1f}B (Large)"
+        if mc >= 1_000_000_000:  return f"${mc/1e9:.1f}B (Mid)"
+        if mc >= 100_000_000:    return f"${mc/1e6:.0f}M (Small)"
+        return f"${mc/1e6:.1f}M (Micro)"
+
     rows_f = []
-    for cid, info in st.session_state.holdings.items():
-        md = market.get(cid, {})
-        current_price = md.get("current_price", 0)
-        ath = md.get("ath", 0)
-        market_cap = md.get("market_cap", 0)
-        volume_24h = md.get("total_volume", 0)
-        vol_mcap = (volume_24h / market_cap * 100) if market_cap else None
-        price_vs_ath = ((current_price - ath) / ath * 100) if ath else None
-        rsi = fetch_rsi(cid)
-
-        def mcap_label(mc):
-            if mc >= 10_000_000_000: return f"${mc/1e9:.1f}B (Large)"
-            if mc >= 1_000_000_000:  return f"${mc/1e9:.1f}B (Mid)"
-            if mc >= 100_000_000:    return f"${mc/1e6:.0f}M (Small)"
-            return f"${mc/1e6:.1f}M (Micro)"
-
+    for cid, m in coin_metrics.items():
+        md = m["md"]
         rows_f.append({
-            "Coin": f"{info['symbol']}",
-            "Price": fmt_price(current_price),
-            "Market Cap": mcap_label(market_cap) if market_cap else "—",
-            "Vol/MCap %": f"{vol_mcap:.1f}%" if vol_mcap else "—",
-            "ATH": fmt_price(ath),
-            "From ATH": f"{price_vs_ath:.0f}%" if price_vs_ath else "—",
-            "7d %": f"{md.get('price_change_percentage_7d_in_currency', 0):+.1f}%",
-            "30d %": f"{md.get('price_change_percentage_30d_in_currency', 0):+.1f}%",
-            "RSI": f"{rsi}" if rsi else "—",
+            "Coin":       m["info"]["symbol"],
+            "Price":      fmt_price(m["cp"]),
+            "Market Cap": mcap_label(m["mcap"]) if m["mcap"] else "—",
+            "Vol/MCap %": f"{m['vol_mcap']:.1f}%" if m["vol_mcap"] else "—",
+            "ATH":        fmt_price(m["ath"]),
+            "From ATH":   f"{m['ath_pct']:.0f}%" if m["ath_pct"] else "—",
+            "7d %":       f"{md.get('price_change_percentage_7d_in_currency', 0):+.1f}%",
+            "30d %":      f"{m['ch30']:+.1f}%" if m["ch30"] else "—",
+            "RSI":        f"{m['rsi']}" if m["rsi"] else "—",
         })
-
     st.dataframe(pd.DataFrame(rows_f), use_container_width=True, hide_index=True)
 
     st.subheader("Market Cap Comparison")
-    mcap_data = {
-        st.session_state.holdings[cid]["symbol"]: market.get(cid, {}).get("market_cap", 0)
-        for cid in COINGECKO_IDS
-    }
-    mcap_df = pd.DataFrame({"Coin": list(mcap_data.keys()), "Market Cap": list(mcap_data.values())})
-    mcap_df = mcap_df[mcap_df["Market Cap"] > 0].sort_values("Market Cap", ascending=False)
+    mcap_df = pd.DataFrame({
+        "Coin": [m["info"]["symbol"] for m in coin_metrics.values()],
+        "Market Cap ($B)": [m["mcap"] / 1e9 for m in coin_metrics.values()],
+    }).query("`Market Cap ($B)` > 0").sort_values("Market Cap ($B)", ascending=False)
     st.bar_chart(mcap_df.set_index("Coin"))
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -525,37 +584,41 @@ with tab3:
 # ══════════════════════════════════════════════════════════════════════════════
 with tab4:
     st.header("👀 Watchlist")
-    st.caption("Track coins you don't own yet. Add them via the sidebar.")
+    st.caption("Coins you're monitoring. Add them via the sidebar search.")
 
     if not st.session_state.watchlist:
-        st.info("No coins on your watchlist yet. Use the sidebar to search and add coins.")
+        st.info("Nothing on your watchlist yet — use the sidebar to search and add coins.")
     else:
         rows_w = []
         for cid in st.session_state.watchlist:
             md = market.get(cid, {})
             if not md:
                 continue
-            current_price = md.get("current_price", 0)
-            ath = md.get("ath", 0)
-            price_vs_ath = ((current_price - ath) / ath * 100) if ath else None
-            mc  = md.get("market_cap", 0)
-            vol = md.get("total_volume", 0)
-            vmp = (vol / mc * 100) if mc else None
-            rsi = fetch_rsi(cid)
+            cp       = md.get("current_price", 0)
+            ath      = md.get("ath", 0)
+            ath_pct  = ((cp - ath) / ath * 100) if ath else None
+            mc       = md.get("market_cap", 0)
+            vol      = md.get("total_volume", 0)
+            vmp      = (vol / mc * 100) if mc else None
+            rsi      = fetch_rsi(cid)
             signal, _, _s = compute_signal(
-                rsi, fg_value, price_vs_ath,
+                rsi, fg_value, ath_pct,
                 md.get("price_change_percentage_30d_in_currency"), None, mc, vmp
             )
             rows_w.append({
-                "Coin": f"{md.get('name', cid)} ({md.get('symbol', '').upper()})",
-                "Price": fmt_price(current_price),
-                "Market Cap": f"${md.get('market_cap', 0)/1e9:.1f}B",
-                "From ATH": f"{price_vs_ath:.0f}%" if price_vs_ath else "—",
-                "7d %": f"{md.get('price_change_percentage_7d_in_currency', 0):+.1f}%",
-                "RSI": f"{rsi}" if rsi else "—",
-                "Signal": signal,
+                "Coin":       f"{md.get('name', cid)} ({md.get('symbol', '').upper()})",
+                "Price":      fmt_price(cp),
+                "Market Cap": f"${mc/1e9:.1f}B" if mc else "—",
+                "From ATH":   f"{ath_pct:.0f}%" if ath_pct else "—",
+                "7d %":       f"{md.get('price_change_percentage_7d_in_currency', 0):+.1f}%",
+                "RSI":        f"{rsi}" if rsi else "—",
+                "Signal":     signal,
             })
         st.dataframe(pd.DataFrame(rows_w), use_container_width=True, hide_index=True)
 
 st.divider()
-st.caption(f"Data: CoinGecko (free) · Alternative.me · Last updated: {datetime.now().strftime('%H:%M:%S')} · Prices refresh every 5 min")
+st.caption(
+    f"Data: CoinGecko (free) · Alternative.me · "
+    f"Prices refresh every 10 min · RSI every 2 hrs · Fear & Greed every 1 hr · "
+    f"Last loaded: {datetime.now().strftime('%H:%M:%S')}"
+)
