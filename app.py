@@ -32,7 +32,20 @@ if "watchlist" not in st.session_state:
     st.session_state.watchlist = []
 
 # ── API helpers ──────────────────────────────────────────────────────────────
-@st.cache_data(ttl=300)
+def _get_with_retry(url: str, timeout: int = 10, retries: int = 3) -> requests.Response:
+    """GET with exponential backoff on 429 rate-limit responses."""
+    for attempt in range(retries):
+        r = requests.get(url, timeout=timeout)
+        if r.status_code == 429:
+            wait = 2 ** attempt  # 1s, 2s, 4s
+            time.sleep(wait)
+            continue
+        r.raise_for_status()
+        return r
+    r.raise_for_status()  # raise after all retries exhausted
+    return r
+
+@st.cache_data(ttl=600)   # 10-min cache — reduces calls by 2×
 def fetch_market_data(coin_ids: tuple):
     ids_str = ",".join(coin_ids)
     url = (
@@ -42,14 +55,12 @@ def fetch_market_data(coin_ids: tuple):
         "&price_change_percentage=7d,30d&sparkline=false"
     )
     try:
-        r = requests.get(url, timeout=10)
-        r.raise_for_status()
+        r = _get_with_retry(url)
         return {c["id"]: c for c in r.json()}
-    except Exception as e:
-        st.error(f"CoinGecko error: {e}")
-        return {}
+    except Exception:
+        return None  # None = use stale cache
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=7200)  # 2-hour cache for RSI (daily data, changes slowly)
 def fetch_rsi(coin_id: str, days: int = 30):
     """Fetch 30-day daily closes and compute 14-day RSI."""
     url = (
@@ -57,8 +68,7 @@ def fetch_rsi(coin_id: str, days: int = 30):
         f"?vs_currency=usd&days={days}&interval=daily"
     )
     try:
-        r = requests.get(url, timeout=10)
-        r.raise_for_status()
+        r = _get_with_retry(url)
         prices = [p[1] for p in r.json().get("prices", [])]
         if len(prices) < 15:
             return None
@@ -81,7 +91,7 @@ def fetch_fear_greed():
     except Exception:
         return None, "Unknown"
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=600)
 def search_coin(query: str):
     try:
         r = requests.get(
@@ -204,7 +214,12 @@ with st.sidebar:
 
 # ── Fetch data ────────────────────────────────────────────────────────────────
 all_ids = tuple(COINGECKO_IDS + st.session_state.watchlist)
-market = fetch_market_data(all_ids)
+market_result = fetch_market_data(all_ids)
+if market_result is not None:
+    st.session_state["last_market"] = market_result  # save last good data
+market = st.session_state.get("last_market", {})
+if market_result is None:
+    st.warning("⚠️ CoinGecko rate limit — showing last known prices. Auto-refreshes in ~10 min.", icon="⏳")
 fg_value, fg_label = fetch_fear_greed()
 
 tab1, tab2, tab3, tab4 = st.tabs(["💼 Portfolio", "🚦 Signals", "📊 Fundamentals", "👀 Watchlist"])
