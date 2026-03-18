@@ -121,60 +121,80 @@ def fmt_qty(q):
     return f"{q:.6g}"
 
 # ── Signal logic ─────────────────────────────────────────────────────────────
-def compute_signal(rsi, fg_value, price_vs_ath_pct, price_change_30d, pnl_pct):
-    score = 0
-    reasons = []
+def score_to_label(score):
+    if score >= 4:   return "Strong Buy",       "🟢"
+    if score >= 2:   return "Buy",               "🟩"
+    if score >= 0:   return "Hold",              "🟡"
+    if score >= -3:  return "Caution",           "🟠"
+    return               "Consider Selling",     "🔴"
 
+def compute_signal(rsi, fg_value, price_vs_ath_pct, price_change_30d, pnl_pct,
+                   market_cap=None, vol_mcap_pct=None):
+    """
+    Returns (label_string, reasons_list, raw_score).
+    Price signals  (max +7 / min -6)
+    Fundamental signals  (max +2 / min -2)
+    """
+    score = 0
+    price_reasons = []
+    fund_reasons  = []
+
+    # ── Price signals ──────────────────────────────────────────────────────
     if rsi is not None:
         if rsi < 30:
-            score += 2; reasons.append(f"RSI {rsi} (oversold)")
+            score += 2; price_reasons.append(f"RSI {rsi} — oversold (buy zone)")
         elif rsi < 40:
-            score += 1; reasons.append(f"RSI {rsi} (leaning oversold)")
+            score += 1; price_reasons.append(f"RSI {rsi} — leaning oversold")
         elif rsi > 70:
-            score -= 2; reasons.append(f"RSI {rsi} (overbought)")
+            score -= 2; price_reasons.append(f"RSI {rsi} — overbought (sell zone)")
         elif rsi > 60:
-            score -= 1; reasons.append(f"RSI {rsi} (leaning overbought)")
+            score -= 1; price_reasons.append(f"RSI {rsi} — leaning overbought")
 
     if fg_value is not None:
         if fg_value < 25:
-            score += 2; reasons.append(f"Fear & Greed {fg_value} (extreme fear)")
+            score += 2; price_reasons.append(f"Fear & Greed {fg_value} — extreme fear (buy zone)")
         elif fg_value < 40:
-            score += 1; reasons.append(f"Fear & Greed {fg_value} (fear)")
+            score += 1; price_reasons.append(f"Fear & Greed {fg_value} — fear")
         elif fg_value > 75:
-            score -= 2; reasons.append(f"Fear & Greed {fg_value} (extreme greed)")
+            score -= 2; price_reasons.append(f"Fear & Greed {fg_value} — extreme greed (sell zone)")
         elif fg_value > 60:
-            score -= 1; reasons.append(f"Fear & Greed {fg_value} (greed)")
+            score -= 1; price_reasons.append(f"Fear & Greed {fg_value} — greed")
 
     if price_vs_ath_pct is not None:
         if price_vs_ath_pct <= -70:
-            score += 2; reasons.append(f"{abs(price_vs_ath_pct):.0f}% below ATH")
+            score += 2; price_reasons.append(f"{abs(price_vs_ath_pct):.0f}% below ATH — historically cheap")
         elif price_vs_ath_pct <= -50:
-            score += 1; reasons.append(f"{abs(price_vs_ath_pct):.0f}% below ATH")
+            score += 1; price_reasons.append(f"{abs(price_vs_ath_pct):.0f}% below ATH — discounted")
         elif price_vs_ath_pct >= -10:
-            score -= 1; reasons.append(f"Near ATH ({abs(price_vs_ath_pct):.0f}% below)")
+            score -= 1; price_reasons.append(f"Near ATH — limited upside at current price")
 
     if price_change_30d is not None:
         if price_change_30d < -25:
-            score += 1; reasons.append(f"Down {abs(price_change_30d):.0f}% in 30d (dip)")
+            score += 1; price_reasons.append(f"Down {abs(price_change_30d):.0f}% in 30d — potential dip entry")
         elif price_change_30d > 30:
-            score -= 1; reasons.append(f"Up {price_change_30d:.0f}% in 30d (momentum high)")
+            score -= 1; price_reasons.append(f"Up {price_change_30d:.0f}% in 30d — short-term momentum high")
 
-    if pnl_pct is not None and pnl_pct > 0:
-        if pnl_pct > 50:
-            score -= 1; reasons.append(f"Up {pnl_pct:.0f}% from your buy (consider partial profit)")
+    if pnl_pct is not None and pnl_pct > 50:
+        score -= 1; price_reasons.append(f"Up {pnl_pct:.0f}% from your buy price — consider taking partial profit")
 
-    if score >= 3:
-        label, color = "Strong Buy", "🟢"
-    elif score >= 1:
-        label, color = "Buy", "🟩"
-    elif score == 0:
-        label, color = "Hold", "🟡"
-    elif score >= -2:
-        label, color = "Caution", "🟠"
-    else:
-        label, color = "Consider Selling", "🔴"
+    # ── Fundamental signals ────────────────────────────────────────────────
+    if market_cap is not None:
+        if market_cap >= 10_000_000_000:
+            score += 1; fund_reasons.append("Large cap (>$10B) — established, lower risk")
+        elif market_cap >= 1_000_000_000:
+            pass  # mid cap: neutral
+        elif market_cap < 500_000_000:
+            score -= 1; fund_reasons.append("Small/micro cap (<$500M) — higher risk, higher volatility")
 
-    return f"{color} {label}", reasons
+    if vol_mcap_pct is not None:
+        if vol_mcap_pct >= 5:
+            score += 1; fund_reasons.append(f"Vol/MCap {vol_mcap_pct:.1f}% — strong liquidity")
+        elif vol_mcap_pct < 1:
+            score -= 1; fund_reasons.append(f"Vol/MCap {vol_mcap_pct:.1f}% — low liquidity, harder to exit")
+
+    label, color = score_to_label(score)
+    reasons = price_reasons + fund_reasons
+    return f"{color} {label}", reasons, score
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -222,7 +242,132 @@ if market_result is None:
     st.warning("⚠️ CoinGecko rate limit — showing last known prices. Auto-refreshes in ~10 min.", icon="⏳")
 fg_value, fg_label = fetch_fear_greed()
 
-tab1, tab2, tab3, tab4 = st.tabs(["💼 Portfolio", "🚦 Signals", "📊 Fundamentals", "👀 Watchlist"])
+# ── Pre-compute all coin metrics (used by Analysis + Signals tabs) ────────────
+coin_metrics = {}
+for cid, info in st.session_state.holdings.items():
+    md = market.get(cid, {})
+    cp          = md.get("current_price", 0)
+    ath         = md.get("ath", 0)
+    market_cap  = md.get("market_cap", 0)
+    volume_24h  = md.get("total_volume", 0)
+    vol_mcap    = (volume_24h / market_cap * 100) if market_cap else None
+    ath_pct     = ((cp - ath) / ath * 100) if ath else None
+    ch30        = md.get("price_change_percentage_30d_in_currency")
+    bp          = info["buy_price"]
+    pnl_pct     = ((cp - bp) / bp * 100) if bp > 0 and cp else None
+    rsi         = fetch_rsi(cid)
+    signal, reasons, score = compute_signal(
+        rsi, fg_value, ath_pct, ch30, pnl_pct, market_cap, vol_mcap
+    )
+    coin_metrics[cid] = dict(
+        info=info, md=md, cp=cp, ath=ath, market_cap=market_cap,
+        vol_mcap=vol_mcap, ath_pct=ath_pct, ch30=ch30,
+        pnl_pct=pnl_pct, rsi=rsi, signal=signal, reasons=reasons, score=score
+    )
+
+tab0, tab1, tab2, tab3, tab4 = st.tabs(
+    ["🎯 Analysis", "💼 Portfolio", "🚦 Signals", "📊 Fundamentals", "👀 Watchlist"]
+)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 0: OVERALL ANALYSIS
+# ══════════════════════════════════════════════════════════════════════════════
+with tab0:
+    st.header("🎯 Overall Analysis")
+    st.caption("Combined rating using price signals (RSI, momentum, ATH distance) + fundamentals (market cap, liquidity).")
+
+    # ── Overall portfolio score ────────────────────────────────────────────
+    scores = [m["score"] for m in coin_metrics.values()]
+    avg_score = sum(scores) / len(scores) if scores else 0
+    port_label, port_color = score_to_label(round(avg_score))
+
+    buys      = sum(1 for s in scores if s >= 2)
+    holds     = sum(1 for s in scores if -1 <= s < 2)
+    cautions  = sum(1 for s in scores if s < -1)
+
+    # Overall verdict banner
+    fg_sentiment = ""
+    if fg_value is not None:
+        if fg_value < 25:   fg_sentiment = "Market is in **Extreme Fear** — historically a good time to accumulate."
+        elif fg_value < 40: fg_sentiment = "Market is in **Fear** — cautious accumulation may be appropriate."
+        elif fg_value < 60: fg_sentiment = "Market is **Neutral** — no strong macro signal either way."
+        elif fg_value < 75: fg_sentiment = "Market is in **Greed** — be selective, avoid chasing pumps."
+        else:               fg_sentiment = "Market is in **Extreme Greed** — consider reducing exposure."
+
+    verdict_bg = {"Strong Buy":"#1a3a1a","Buy":"#1a2e1a","Hold":"#2e2a1a",
+                  "Caution":"#2e1f0a","Consider Selling":"#2e0a0a"}
+    bg = verdict_bg.get(port_label, "#1a1a1a")
+
+    st.markdown(
+        f"""<div style="background:{bg};border-radius:12px;padding:20px 24px;margin-bottom:16px">
+        <div style="font-size:2rem;font-weight:700">{port_color} Portfolio Verdict: {port_label}</div>
+        <div style="color:#aaa;margin-top:6px">Average signal score: <b>{avg_score:+.1f}</b> across {len(scores)} coins
+        &nbsp;·&nbsp; {fg_sentiment}</div>
+        </div>""",
+        unsafe_allow_html=True
+    )
+
+    # Breakdown KPIs
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Coins to Buy",    buys,     help="Score ≥ 2")
+    k2.metric("Coins to Hold",   holds,    help="Score −1 to +1")
+    k3.metric("Coins to Caution",cautions, help="Score < −1")
+    k4.metric("Fear & Greed",    f"{fg_value} — {fg_label}" if fg_value else "—")
+
+    st.divider()
+
+    # ── Per-coin summary table ─────────────────────────────────────────────
+    st.subheader("Per-Coin Rating")
+    rows_a = []
+    for cid, m in coin_metrics.items():
+        rows_a.append({
+            "Coin":        f"{m['info']['name']} ({m['info']['symbol']})",
+            "Price":       fmt_price(m["cp"]),
+            "RSI":         f"{m['rsi']}" if m["rsi"] else "—",
+            "From ATH":    f"{m['ath_pct']:.0f}%" if m["ath_pct"] else "—",
+            "30d %":       f"{m['ch30']:+.1f}%" if m["ch30"] else "—",
+            "P&L %":       f"{m['pnl_pct']:+.1f}%" if m["pnl_pct"] is not None else "—",
+            "Score":       f"{m['score']:+d}",
+            "Rating":      m["signal"],
+        })
+    st.dataframe(pd.DataFrame(rows_a), use_container_width=True, hide_index=True)
+
+    # ── Key insights ───────────────────────────────────────────────────────
+    st.divider()
+    st.subheader("Key Insights")
+
+    # Best opportunity (highest score)
+    best = max(coin_metrics.items(), key=lambda x: x[1]["score"])
+    worst = min(coin_metrics.items(), key=lambda x: x[1]["score"])
+    most_discounted = min(
+        ((cid, m) for cid, m in coin_metrics.items() if m["ath_pct"] is not None),
+        key=lambda x: x[1]["ath_pct"], default=None
+    )
+
+    insights = []
+    insights.append(f"**Best opportunity:** {best[1]['info']['name']} ({best[1]['info']['symbol']}) — score {best[1]['score']:+d}, rated {best[1]['signal']}")
+    if worst[1]["score"] < 0:
+        insights.append(f"**Most cautious:** {worst[1]['info']['name']} ({worst[1]['info']['symbol']}) — score {worst[1]['score']:+d}, rated {worst[1]['signal']}")
+    if most_discounted:
+        cid, m = most_discounted
+        insights.append(f"**Most discounted from ATH:** {m['info']['name']} ({m['info']['symbol']}) at {m['ath_pct']:.0f}% below its all-time high of {fmt_price(m['ath'])}")
+
+    # Portfolio-level narrative
+    if avg_score >= 3:
+        insights.append("**Overall:** Strong buying conditions across the portfolio. Consider adding to positions if you have available capital.")
+    elif avg_score >= 1:
+        insights.append("**Overall:** Mild buying conditions. Gradual accumulation (DCA) may be appropriate rather than a lump-sum entry.")
+    elif avg_score >= -1:
+        insights.append("**Overall:** Mixed signals. Hold current positions and wait for a clearer direction before adding.")
+    elif avg_score >= -3:
+        insights.append("**Overall:** Caution warranted. Review positions — consider whether any have exceeded your risk tolerance.")
+    else:
+        insights.append("**Overall:** Bearish signals across most coins. Review your risk exposure and consider whether to reduce positions.")
+
+    for ins in insights:
+        st.markdown(f"- {ins}")
+
+    st.caption("⚠️ This is not financial advice. Always do your own research before making investment decisions.")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 1: PORTFOLIO
@@ -299,30 +444,19 @@ with tab2:
     if fg_value:
         st.info(f"**Fear & Greed Index: {fg_value} — {fg_label}**  |  <25 = buy zone · >75 = sell zone")
 
-    for cid, info in st.session_state.holdings.items():
-        md = market.get(cid, {})
-        current_price = md.get("current_price", 0)
-        ath = md.get("ath", 0)
-        price_vs_ath = ((current_price - ath) / ath * 100) if ath else None
-        price_change_30d = md.get("price_change_percentage_30d_in_currency")
-
-        buy_price = info["buy_price"]
-        pnl_pct = ((current_price - buy_price) / buy_price * 100) if buy_price > 0 else None
-
-        rsi = fetch_rsi(cid)
-        signal, reasons = compute_signal(rsi, fg_value, price_vs_ath, price_change_30d, pnl_pct)
-
-        with st.expander(f"**{info['name']} ({info['symbol']})** — {signal}", expanded=True):
+    for cid, m in coin_metrics.items():
+        info = m["info"]
+        with st.expander(f"**{info['name']} ({info['symbol']})** — {m['signal']}  (score {m['score']:+d})", expanded=True):
             c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Current Price", fmt_price(current_price))
-            c2.metric("RSI (14d)", f"{rsi}" if rsi else "—",
+            c1.metric("Current Price", fmt_price(m["cp"]))
+            c2.metric("RSI (14d)", f"{m['rsi']}" if m["rsi"] else "—",
                       help="<30 oversold (buy) · >70 overbought (sell)")
-            c3.metric("From ATH", f"{price_vs_ath:.1f}%" if price_vs_ath else "—")
-            c4.metric("30d Change", f"{price_change_30d:+.1f}%" if price_change_30d else "—")
+            c3.metric("From ATH", f"{m['ath_pct']:.1f}%" if m["ath_pct"] else "—")
+            c4.metric("30d Change", f"{m['ch30']:+.1f}%" if m["ch30"] else "—")
 
-            if reasons:
+            if m["reasons"]:
                 st.write("**Factors:**")
-                for r in reasons:
+                for r in m["reasons"]:
                     st.write(f"  • {r}")
             else:
                 st.write("No strong signals at this time.")
@@ -404,10 +538,13 @@ with tab4:
             current_price = md.get("current_price", 0)
             ath = md.get("ath", 0)
             price_vs_ath = ((current_price - ath) / ath * 100) if ath else None
+            mc  = md.get("market_cap", 0)
+            vol = md.get("total_volume", 0)
+            vmp = (vol / mc * 100) if mc else None
             rsi = fetch_rsi(cid)
-            signal, _ = compute_signal(
+            signal, _, _s = compute_signal(
                 rsi, fg_value, price_vs_ath,
-                md.get("price_change_percentage_30d_in_currency"), None
+                md.get("price_change_percentage_30d_in_currency"), None, mc, vmp
             )
             rows_w.append({
                 "Coin": f"{md.get('name', cid)} ({md.get('symbol', '').upper()})",
