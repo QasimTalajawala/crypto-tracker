@@ -91,6 +91,25 @@ def search_coin(query: str):
     except Exception:
         return []
 
+# ── Formatting helpers ────────────────────────────────────────────────────────
+def fmt_price(p):
+    """Smart price: no trailing zeros, right number of decimals for the magnitude."""
+    if p is None or p == 0:
+        return "—"
+    if p >= 1_000:
+        return f"${p:,.0f}"
+    if p >= 1:
+        return f"${p:,.2f}"
+    if p >= 0.01:
+        return f"${p:.4f}"
+    return f"${p:.6f}"
+
+def fmt_qty(q):
+    """Show quantity with up to 6 significant figures, no trailing zeros."""
+    if q is None:
+        return "—"
+    return f"{q:.6g}"
+
 # ── Signal logic ─────────────────────────────────────────────────────────────
 def compute_signal(rsi, fg_value, price_vs_ath_pct, price_change_30d, pnl_pct):
     score = 0
@@ -158,7 +177,7 @@ with st.sidebar:
             f"{info['symbol']} buy price (USD)",
             min_value=0.0,
             value=float(info["buy_price"]),
-            format="%.4f",
+            format="%.2f",
             key=f"bp_{cid}",
         )
         st.session_state.holdings[cid]["buy_price"] = bp
@@ -224,9 +243,9 @@ with tab1:
 
         rows.append({
             "Coin": f"{info['name']} ({info['symbol']})",
-            "Qty": qty,
-            "Buy Price": f"${buy_price:,.4f}" if buy_price > 0 else "—",
-            "Current Price": f"${current_price:,.4f}" if current_price else "—",
+            "Qty": fmt_qty(qty),
+            "Buy Price": fmt_price(buy_price) if buy_price > 0 else "—",
+            "Current Price": fmt_price(current_price),
             "Value": f"${value:,.2f}",
             "P&L $": f"${pnl:+,.2f}" if pnl is not None else "—",
             "P&L %": f"{pnl_pct:+.1f}%" if pnl_pct is not None else "—",
@@ -280,7 +299,7 @@ with tab2:
 
         with st.expander(f"**{info['name']} ({info['symbol']})** — {signal}", expanded=True):
             c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Current Price", f"${current_price:,.4f}" if current_price else "—")
+            c1.metric("Current Price", fmt_price(current_price))
             c2.metric("RSI (14d)", f"{rsi}" if rsi else "—",
                       help="<30 oversold (buy) · >70 overbought (sell)")
             c3.metric("From ATH", f"{price_vs_ath:.1f}%" if price_vs_ath else "—")
@@ -331,11 +350,11 @@ with tab3:
 
         rows_f.append({
             "Coin": f"{info['symbol']}",
-            "Price": f"${current_price:,.4f}" if current_price else "—",
+            "Price": fmt_price(current_price),
             "Market Cap": mcap_label(market_cap) if market_cap else "—",
-            "Vol/MCap %": f"{vol_mcap:.2f}%" if vol_mcap else "—",
-            "ATH": f"${ath:,.2f}" if ath else "—",
-            "From ATH": f"{price_vs_ath:.1f}%" if price_vs_ath else "—",
+            "Vol/MCap %": f"{vol_mcap:.1f}%" if vol_mcap else "—",
+            "ATH": fmt_price(ath),
+            "From ATH": f"{price_vs_ath:.0f}%" if price_vs_ath else "—",
             "7d %": f"{md.get('price_change_percentage_7d_in_currency', 0):+.1f}%",
             "30d %": f"{md.get('price_change_percentage_30d_in_currency', 0):+.1f}%",
             "RSI": f"{rsi}" if rsi else "—",
@@ -377,9 +396,9 @@ with tab4:
             )
             rows_w.append({
                 "Coin": f"{md.get('name', cid)} ({md.get('symbol', '').upper()})",
-                "Price": f"${current_price:,.4f}",
-                "Market Cap": f"${md.get('market_cap', 0)/1e9:.2f}B",
-                "From ATH": f"{price_vs_ath:.1f}%" if price_vs_ath else "—",
+                "Price": fmt_price(current_price),
+                "Market Cap": f"${md.get('market_cap', 0)/1e9:.1f}B",
+                "From ATH": f"{price_vs_ath:.0f}%" if price_vs_ath else "—",
                 "7d %": f"{md.get('price_change_percentage_7d_in_currency', 0):+.1f}%",
                 "RSI": f"{rsi}" if rsi else "—",
                 "Signal": signal,
