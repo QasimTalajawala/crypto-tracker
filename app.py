@@ -23,6 +23,152 @@ DEFAULT_HOLDINGS = {
 COINGECKO_IDS = list(DEFAULT_HOLDINGS.keys())
 HOLDINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "holdings.json")
 
+# ── Qualitative Fundamental Profiles ─────────────────────────────────────────
+# Tier 1 = Blue Chip (+2):  Proven, institutional-grade, irreplaceable infrastructure
+# Tier 2 = Established (+1): Solid use case, growing ecosystem, meaningful execution risk
+# Tier 3 = Speculative (0):  Genuine innovation but early-stage and unproven at scale
+#
+# These scores add to the signal score so that strong fundamentals require fewer
+# price signals to reach "Buy", and speculative coins need a deeper dip to qualify.
+FUNDAMENTAL_TIERS = {
+    "bitcoin": {
+        "tier": 1,
+        "tier_label": "Tier 1 — Blue Chip",
+        "tier_score": 2,
+        "use_case": "Digital gold / store of value / hardest money ever created",
+        "strengths": [
+            "Hard-capped 21M supply — mathematically scarce",
+            "15+ year unbroken track record — no hacks, no downtime",
+            "Spot ETFs approved (BlackRock, Fidelity) — institutional gateway",
+            "Most decentralised network — 15,000+ nodes globally",
+            "Legal tender in El Salvador & Central African Republic",
+            "Lightning Network enables near-instant, near-free payments",
+        ],
+        "risks": [
+            "Slow on-chain feature development by design",
+            "Energy usage attracts ESG criticism",
+            "Minimal programmability vs. smart-contract platforms",
+        ],
+    },
+    "ethereum": {
+        "tier": 1,
+        "tier_label": "Tier 1 — Blue Chip",
+        "tier_score": 2,
+        "use_case": "Smart contract platform — backbone of DeFi, NFTs, and Web3",
+        "strengths": [
+            "Largest DeFi ecosystem ($40B+ TVL — Aave, Uniswap, Lido)",
+            "Proof of Stake since 2022 — 99.95% energy reduction",
+            "EIP-1559 burns ETH on every transaction — deflationary mechanics",
+            "Spot ETF approved — institutional adoption accelerating",
+            "4,000+ monthly active developers — most in crypto",
+            "Layer-2 ecosystem (Arbitrum, Base, Optimism) scales throughput",
+        ],
+        "risks": [
+            "Layer-2 fragmentation can dilute ETH fee revenue",
+            "Competition from faster/cheaper L1s (Solana, Aptos, Sui)",
+            "Complex upgrades carry execution risk",
+        ],
+    },
+    "binancecoin": {
+        "tier": 2,
+        "tier_label": "Tier 2 — Established",
+        "tier_score": 1,
+        "use_case": "Exchange utility token powering BNB Chain (BSC) ecosystem",
+        "strengths": [
+            "Quarterly token burns reduce supply systematically",
+            "Backed by Binance — world's largest crypto exchange by volume",
+            "BNB Chain hosts active DeFi/GameFi ecosystem",
+            "Low transaction fees on BSC make it accessible for retail",
+            "Used for trading fee discounts, Launchpad access",
+        ],
+        "risks": [
+            "Highly centralised — Binance controls large token supply",
+            "Regulatory risk directly tied to Binance's legal standing",
+            "SEC has named BNB as unregistered security in lawsuits",
+            "BSC often criticised as centralised copy of Ethereum",
+        ],
+    },
+    "solana": {
+        "tier": 2,
+        "tier_label": "Tier 2 — Established",
+        "tier_score": 1,
+        "use_case": "High-performance Layer-1 blockchain for DeFi, NFTs, and payments",
+        "strengths": [
+            "65,000+ TPS throughput with sub-second finality",
+            "Transaction fees typically <$0.001 — best UX for retail",
+            "Strong DeFi momentum (Jupiter DEX, Marinade, Raydium)",
+            "Firedancer client incoming — further decentralisation & speed",
+            "Growing developer base — 2nd largest in crypto after Ethereum",
+            "Solana Pay adopted by Shopify, Stripe for commerce",
+        ],
+        "risks": [
+            "Multiple network outages in 2022 damaged trust",
+            "Significant VC allocation — early investors still hold large supply",
+            "More centralised validator set than BTC or ETH",
+            "FTX collapse damaged reputation (FTX was major backer)",
+        ],
+    },
+    "chainlink": {
+        "tier": 2,
+        "tier_label": "Tier 2 — Established",
+        "tier_score": 1,
+        "use_case": "Decentralised oracle network — connects blockchains to real-world data",
+        "strengths": [
+            "~70% market share in DeFi oracles — Aave, Compound, Synthetix rely on it",
+            "Google Cloud and Swift official partnerships",
+            "CCIP (Cross-Chain Interoperability Protocol) expanding use case",
+            "Staking v0.2 launched — token utility growing",
+            "First-mover advantage — deeply embedded in DeFi infrastructure",
+        ],
+        "risks": [
+            "Competition from Pyth Network (faster, used by Solana DeFi) and API3",
+            "Growth closely tied to overall DeFi adoption",
+            "Token price has historically lagged behind BTC/ETH in bull runs",
+            "Oracle manipulation remains an industry-wide risk",
+        ],
+    },
+    "bittensor": {
+        "tier": 3,
+        "tier_label": "Tier 3 — Speculative / High Potential",
+        "tier_score": 0,
+        "use_case": "Decentralised AI/ML network — miners compete by training machine learning models",
+        "strengths": [
+            "Unique model: mining = training AI models — aligns crypto incentives with AI",
+            "Hard-capped 21M TAO supply (same as BTC) — genuine scarcity",
+            "60+ active subnets covering text, image, finance, speech AI",
+            "Strong mindshare at intersection of AI and crypto",
+            "First-mover in decentralised AI incentive layer",
+        ],
+        "risks": [
+            "Early stage — subnet quality and output varies widely",
+            "Highly volatile — prone to sharp 50-70% drawdowns",
+            "Complex tokenomics still evolving",
+            "Dependent on continued AI narrative momentum",
+            "Small ecosystem relative to valuation",
+        ],
+    },
+    "render-token": {
+        "tier": 3,
+        "tier_label": "Tier 3 — Speculative / High Potential",
+        "tier_score": 0,
+        "use_case": "Decentralised GPU marketplace — connecting idle GPUs to 3D rendering and AI compute jobs",
+        "strengths": [
+            "Real, tangible use case — creators pay GPU providers for rendering",
+            "OctaneRender (industry-leading 3D tool) integration",
+            "Apple partnership — Metal GPU support",
+            "Migrated to Solana — lower fees, faster settlement",
+            "AI training demand growing rapidly, underpins GPU market",
+        ],
+        "risks": [
+            "Dependent on AI/3D rendering narrative staying strong",
+            "Competition from AWS, Google Cloud, and Vast.ai GPU services",
+            "Token economics still evolving post-Solana migration",
+            "Relatively small core team",
+            "Revenue model not yet fully proven at scale",
+        ],
+    },
+}
+
 # ── Holdings persistence ──────────────────────────────────────────────────────
 def load_holdings():
     if os.path.exists(HOLDINGS_FILE):
@@ -163,11 +309,34 @@ def score_to_label(score):
     return              "Consider Selling",    "🔴"
 
 def compute_signal(rsi, fg_value, price_vs_ath_pct, price_change_30d, pnl_pct,
-                   market_cap=None, vol_mcap_pct=None):
+                   market_cap=None, vol_mcap_pct=None,
+                   tier_score=0, tier_reason=""):
+    """
+    Score breakdown (all additive):
+
+    PRICE SIGNALS
+      RSI          < 30 = +2  |  < 40 = +1  |  > 60 = -1  |  > 70 = -2
+      Fear & Greed < 25 = +2  |  < 40 = +1  |  > 60 = -1  |  > 75 = -2
+      ATH distance ≤-70% = +2 |  ≤-50% = +1 |  ≥-10% = -1
+      30d momentum < -25% = +1 |  > +30% = -1
+      Personal P&L > +50% = -1 (partial profit nudge)
+
+    FINANCIAL FUNDAMENTALS
+      Market cap   ≥$10B = +1  |  <$500M = -1
+      Vol/MCap     ≥ 5%  = +1  |  <  1%  = -1
+
+    QUALITATIVE FUNDAMENTALS (via FUNDAMENTAL_TIERS)
+      Tier 1 (Blue Chip)             = +2   e.g. BTC, ETH
+      Tier 2 (Established)           = +1   e.g. BNB, SOL, LINK
+      Tier 3 (Speculative/Potential) =  0   e.g. TAO, RENDER
+
+    LABELS: Strong Buy ≥+4 | Buy ≥+2 | Hold ≥0 | Caution ≥-3 | Consider Selling <-3
+    """
     score = 0
     price_reasons = []
     fund_reasons  = []
 
+    # ── Price signals ─────────────────────────────────────────────────────────
     if rsi is not None:
         if rsi < 30:    score += 2; price_reasons.append(f"RSI {rsi} — oversold (buy zone)")
         elif rsi < 40:  score += 1; price_reasons.append(f"RSI {rsi} — leaning oversold")
@@ -190,8 +359,9 @@ def compute_signal(rsi, fg_value, price_vs_ath_pct, price_change_30d, pnl_pct,
         elif price_change_30d > 30: score -= 1; price_reasons.append(f"Up {price_change_30d:.0f}% in 30d — short-term momentum high")
 
     if pnl_pct is not None and pnl_pct > 50:
-        score -= 1; price_reasons.append(f"Up {pnl_pct:.0f}% from your buy — consider partial profit")
+        score -= 1; price_reasons.append(f"Up {pnl_pct:.0f}% from your buy — consider taking partial profit")
 
+    # ── Financial fundamentals ────────────────────────────────────────────────
     if market_cap is not None:
         if market_cap >= 10_000_000_000:  score += 1; fund_reasons.append("Large cap (>$10B) — established, lower risk")
         elif market_cap < 500_000_000:    score -= 1; fund_reasons.append("Small/micro cap (<$500M) — higher risk")
@@ -199,6 +369,11 @@ def compute_signal(rsi, fg_value, price_vs_ath_pct, price_change_30d, pnl_pct,
     if vol_mcap_pct is not None:
         if vol_mcap_pct >= 5:   score += 1; fund_reasons.append(f"Vol/MCap {vol_mcap_pct:.1f}% — strong liquidity")
         elif vol_mcap_pct < 1:  score -= 1; fund_reasons.append(f"Vol/MCap {vol_mcap_pct:.1f}% — low liquidity")
+
+    # ── Qualitative fundamentals (tier) ───────────────────────────────────────
+    if tier_score != 0 and tier_reason:
+        score += tier_score
+        fund_reasons.append(tier_reason)
 
     label, color = score_to_label(score)
     return f"{color} {label}", price_reasons + fund_reasons, score
@@ -305,14 +480,26 @@ for cid, info in st.session_state.holdings.items():
     bp         = info["buy_price"]
     pnl_pct    = ((cp - bp) / bp * 100) if bp > 0 and cp else None
     rsi        = fetch_rsi(cid)
+
+    # Pull qualitative tier profile (falls back gracefully for unknown coins)
+    tier_info  = FUNDAMENTAL_TIERS.get(cid, {})
+    tier_score = tier_info.get("tier_score", 0)
+    tier_label = tier_info.get("tier_label", "Unrated")
+    tier_reason = (
+        f"{tier_label} — {tier_info['use_case']}"
+        if tier_info else ""
+    )
+
     signal, reasons, score = compute_signal(
-        rsi, fg_value, ath_pct, ch30, pnl_pct, mcap, vol_mcap
+        rsi, fg_value, ath_pct, ch30, pnl_pct, mcap, vol_mcap,
+        tier_score=tier_score, tier_reason=tier_reason
     )
     coin_metrics[cid] = dict(
         info=info, md=md, cp=cp, ath=ath, mcap=mcap,
         vol_mcap=vol_mcap, ath_pct=ath_pct, ch30=ch30,
         pnl_pct=pnl_pct, rsi=rsi, signal=signal, reasons=reasons, score=score,
-        value=info["qty"] * cp
+        value=info["qty"] * cp,
+        tier_info=tier_info, tier_label=tier_label, tier_score=tier_score
     )
 
 tab0, tab1, tab2, tab3, tab4 = st.tabs(
@@ -324,7 +511,7 @@ tab0, tab1, tab2, tab3, tab4 = st.tabs(
 # ══════════════════════════════════════════════════════════════════════════════
 with tab0:
     st.header("🎯 Overall Analysis")
-    st.caption("Combined score: price signals (RSI, ATH distance, momentum) + fundamentals (market cap, liquidity).")
+    st.caption("Combined score: price signals (RSI, ATH distance, momentum) + financial fundamentals (market cap, liquidity) + qualitative fundamentals (technology tier, use case, ecosystem).")
 
     scores    = [m["score"] for m in coin_metrics.values()]
     avg_score = sum(scores) / len(scores) if scores else 0
@@ -371,14 +558,15 @@ with tab0:
     rows_a = []
     for cid, m in coin_metrics.items():
         rows_a.append({
-            "Coin":     f"{m['info']['name']} ({m['info']['symbol']})",
-            "Price":    fmt_price(m["cp"]),
-            "RSI":      f"{m['rsi']}" if m["rsi"] else "—",
-            "From ATH": f"{m['ath_pct']:.0f}%" if m["ath_pct"] else "—",
-            "30d %":    f"{m['ch30']:+.1f}%" if m["ch30"] else "—",
-            "P&L %":    f"{m['pnl_pct']:+.1f}%" if m["pnl_pct"] is not None else "—",
-            "Score":    f"{m['score']:+d}",
-            "Rating":   m["signal"],
+            "Coin":       f"{m['info']['name']} ({m['info']['symbol']})",
+            "Qual. Tier": m["tier_label"],
+            "Price":      fmt_price(m["cp"]),
+            "RSI":        f"{m['rsi']}" if m["rsi"] else "—",
+            "From ATH":   f"{m['ath_pct']:.0f}%" if m["ath_pct"] else "—",
+            "30d %":      f"{m['ch30']:+.1f}%" if m["ch30"] else "—",
+            "P&L %":      f"{m['pnl_pct']:+.1f}%" if m["pnl_pct"] is not None else "—",
+            "Score":      f"{m['score']:+d}",
+            "Rating":     m["signal"],
         })
     st.dataframe(pd.DataFrame(rows_a), use_container_width=True, hide_index=True)
 
@@ -546,6 +734,10 @@ with tab2:
                       help="<30 oversold · >70 overbought")
             c3.metric("From ATH", f"{m['ath_pct']:.1f}%" if m["ath_pct"] else "—")
             c4.metric("30d Change", f"{m['ch30']:+.1f}%" if m["ch30"] else "—")
+
+            if m["tier_info"]:
+                st.caption(f"🏛️ **{m['tier_label']}** — {m['tier_info'].get('use_case', '')}")
+
             if m["reasons"]:
                 st.write("**Factors driving this rating:**")
                 for r in m["reasons"]:
@@ -558,17 +750,21 @@ with tab2:
 # ══════════════════════════════════════════════════════════════════════════════
 with tab3:
     st.header("📊 Fundamentals")
-    st.caption("Key market metrics to assess each coin's size, liquidity and valuation.")
+    st.caption("Market metrics + qualitative coin profiles — what each coin does, why it matters, and what risks to watch.")
 
     with st.expander("📖 How to read these metrics", expanded=False):
         st.markdown("""
 | Metric | Good sign | Red flag |
 |---|---|---|
+| **Qual. Tier** | Tier 1 = Blue Chip (proven, institutional) | Tier 3 = Speculative (early-stage) |
 | **Market Cap** | >$10B (large cap = stable) | <$100M (micro cap = risky) |
 | **Vol/MCap %** | >3% (active, liquid) | <0.5% (illiquid, hard to exit) |
 | **From ATH** | −50% to −80% (historically cheap) | Near 0% (near peak) |
 | **7d / 30d %** | Moderate positive | Extreme >50% (FOMO) or deep negative |
 | **RSI** | 30–50 (healthy zone) | <20 or >80 (extremes) |
+
+**Qual. Tier scoring in signal:** Tier 1 = +2 pts · Tier 2 = +1 pt · Tier 3 = 0 pts
+This means blue-chip coins need fewer price signals to reach "Buy", while speculative coins require a stronger dip.
 """)
 
     def mcap_label(mc):
@@ -581,15 +777,16 @@ with tab3:
     for cid, m in coin_metrics.items():
         md = m["md"]
         rows_f.append({
-            "Coin":       m["info"]["symbol"],
-            "Price":      fmt_price(m["cp"]),
-            "Market Cap": mcap_label(m["mcap"]) if m["mcap"] else "—",
-            "Vol/MCap %": f"{m['vol_mcap']:.1f}%" if m["vol_mcap"] else "—",
-            "ATH":        fmt_price(m["ath"]),
-            "From ATH":   f"{m['ath_pct']:.0f}%" if m["ath_pct"] else "—",
-            "7d %":       f"{md.get('price_change_percentage_7d_in_currency', 0):+.1f}%",
-            "30d %":      f"{m['ch30']:+.1f}%" if m["ch30"] else "—",
-            "RSI":        f"{m['rsi']}" if m["rsi"] else "—",
+            "Coin":        m["info"]["symbol"],
+            "Qual. Tier":  m["tier_label"],
+            "Price":       fmt_price(m["cp"]),
+            "Market Cap":  mcap_label(m["mcap"]) if m["mcap"] else "—",
+            "Vol/MCap %":  f"{m['vol_mcap']:.1f}%" if m["vol_mcap"] else "—",
+            "ATH":         fmt_price(m["ath"]),
+            "From ATH":    f"{m['ath_pct']:.0f}%" if m["ath_pct"] else "—",
+            "7d %":        f"{md.get('price_change_percentage_7d_in_currency', 0):+.1f}%",
+            "30d %":       f"{m['ch30']:+.1f}%" if m["ch30"] else "—",
+            "RSI":         f"{m['rsi']}" if m["rsi"] else "—",
         })
     st.dataframe(pd.DataFrame(rows_f), use_container_width=True, hide_index=True)
 
@@ -599,6 +796,49 @@ with tab3:
         "Market Cap ($B)": [m["mcap"] / 1e9 for m in coin_metrics.values()],
     }).query("`Market Cap ($B)` > 0").sort_values("Market Cap ($B)", ascending=False)
     st.bar_chart(mcap_df.set_index("Coin"))
+
+    st.divider()
+
+    # ── Qualitative Coin Profiles ──────────────────────────────────────────
+    st.subheader("🏛️ Coin Profiles — What You're Investing In")
+    st.caption("Expand each coin to see its use case, competitive strengths, and key risks. This is the qualitative layer behind the signal score.")
+
+    tier_colors = {"Tier 1": "#1a3a1a", "Tier 2": "#1a2a3a", "Tier 3": "#2e2a1a"}
+    tier_badges = {"Tier 1": "🟢", "Tier 2": "🔵", "Tier 3": "🟡"}
+
+    for cid, m in coin_metrics.items():
+        tf = m["tier_info"]
+        if not tf:
+            continue
+        info      = m["info"]
+        tier_key  = f"Tier {tf['tier']}"
+        badge     = tier_badges.get(tier_key, "⚪")
+        bg_color  = tier_colors.get(tier_key, "#1a1a1a")
+
+        with st.expander(
+            f"{badge} **{info['name']} ({info['symbol']})** — {tf['tier_label']}",
+            expanded=False
+        ):
+            st.markdown(
+                f"<div style='background:{bg_color};border-radius:8px;padding:10px 16px;margin-bottom:10px'>"
+                f"<b>Use case:</b> {tf['use_case']}</div>",
+                unsafe_allow_html=True
+            )
+
+            col_s, col_r = st.columns(2)
+            with col_s:
+                st.markdown("**✅ Key Strengths**")
+                for s in tf["strengths"]:
+                    st.markdown(f"- {s}")
+            with col_r:
+                st.markdown("**⚠️ Key Risks**")
+                for r in tf["risks"]:
+                    st.markdown(f"- {r}")
+
+            st.caption(
+                f"Signal contribution: **{tf['tier_label']}** adds "
+                f"**{'+' if tf['tier_score'] > 0 else ''}{tf['tier_score']} pts** to this coin's overall score."
+            )
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 4: WATCHLIST
