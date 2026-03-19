@@ -82,7 +82,13 @@ def fetch_market_data(coin_ids: tuple):
         return None
 
 @st.cache_data(ttl=7200)
-def fetch_rsi(coin_id: str, days: int = 30):
+def fetch_rsi(coin_id: str, days: int = 100):
+    """
+    Fetch daily closes and compute RSI using Wilder's true smoothing method:
+      1. Seed: simple mean of first 14 up-moves / down-moves
+      2. Smoothing: avg = (prev_avg * 13 + current) / 14  (Wilder's EMA)
+    100 days gives ~86 stable RSI readings after the 14-period seed.
+    """
     url = (
         f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"
         f"?vs_currency=usd&days={days}&interval=daily"
@@ -90,15 +96,30 @@ def fetch_rsi(coin_id: str, days: int = 30):
     try:
         r = _get_with_retry(url)
         prices = [p[1] for p in r.json().get("prices", [])]
-        if len(prices) < 15:
+        if len(prices) < 16:   # need at least 15 deltas for 1 seed RSI value
             return None
-        closes = pd.Series(prices)
-        delta = closes.diff()
-        gain  = delta.clip(lower=0).rolling(14).mean()
-        loss  = (-delta.clip(upper=0)).rolling(14).mean()
-        rs    = gain / loss.replace(0, np.nan)
-        rsi   = 100 - (100 / (1 + rs))
-        return round(float(rsi.iloc[-1]), 1)
+
+        closes   = pd.Series(prices)
+        delta    = closes.diff().dropna()           # day-over-day changes
+        gains    = delta.clip(lower=0).values       # up-moves (0 on down days)
+        losses   = (-delta.clip(upper=0)).values    # down-moves (0 on up days)
+
+        period   = 14
+
+        # ── Step 1: seed average (simple mean of first 14 changes) ──────────
+        avg_gain = gains[:period].mean()
+        avg_loss = losses[:period].mean()
+
+        # ── Step 2: Wilder's smoothing for every subsequent candle ──────────
+        for g, l in zip(gains[period:], losses[period:]):
+            avg_gain = (avg_gain * (period - 1) + g) / period
+            avg_loss = (avg_loss * (period - 1) + l) / period
+
+        if avg_loss == 0:
+            return 100.0                            # all gains, no losses
+        rs  = avg_gain / avg_loss
+        rsi = 100 - (100 / (1 + rs))
+        return round(rsi, 1)
     except Exception:
         return None
 
