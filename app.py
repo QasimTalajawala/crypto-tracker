@@ -34,7 +34,7 @@ FUNDAMENTAL_TIERS = {
     "bitcoin": {
         "tier": 1,
         "tier_label": "Tier 1 — Blue Chip",
-        "tier_score": 2,
+        "tier_score": 3,
         "use_case": "Digital gold / store of value / hardest money ever created",
         "strengths": [
             "Hard-capped 21M supply — mathematically scarce",
@@ -53,7 +53,7 @@ FUNDAMENTAL_TIERS = {
     "ethereum": {
         "tier": 1,
         "tier_label": "Tier 1 — Blue Chip",
-        "tier_score": 2,
+        "tier_score": 3,
         "use_case": "Smart contract platform — backbone of DeFi, NFTs, and Web3",
         "strengths": [
             "Largest DeFi ecosystem ($40B+ TVL — Aave, Uniswap, Lido)",
@@ -72,7 +72,7 @@ FUNDAMENTAL_TIERS = {
     "binancecoin": {
         "tier": 2,
         "tier_label": "Tier 2 — Established",
-        "tier_score": 1,
+        "tier_score": 2,
         "use_case": "Exchange utility token powering BNB Chain (BSC) ecosystem",
         "strengths": [
             "Quarterly token burns reduce supply systematically",
@@ -91,7 +91,7 @@ FUNDAMENTAL_TIERS = {
     "solana": {
         "tier": 2,
         "tier_label": "Tier 2 — Established",
-        "tier_score": 1,
+        "tier_score": 2,
         "use_case": "High-performance Layer-1 blockchain for DeFi, NFTs, and payments",
         "strengths": [
             "65,000+ TPS throughput with sub-second finality",
@@ -111,7 +111,7 @@ FUNDAMENTAL_TIERS = {
     "chainlink": {
         "tier": 2,
         "tier_label": "Tier 2 — Established",
-        "tier_score": 1,
+        "tier_score": 2,
         "use_case": "Decentralised oracle network — connects blockchains to real-world data",
         "strengths": [
             "~70% market share in DeFi oracles — Aave, Compound, Synthetix rely on it",
@@ -315,9 +315,12 @@ def compute_signal(rsi, fg_value, price_vs_ath_pct, price_change_30d, pnl_pct,
     Score breakdown (all additive):
 
     PRICE SIGNALS
-      RSI          < 30 = +2  |  < 40 = +1  |  > 60 = -1  |  > 70 = -2
+      RSI          < 30 = +1  |  < 40 = +1  |  > 60 = -1  |  > 70 = -1
+        (capped at ±1 — RSI is a 14-day signal, too noisy for weeks/months decisions)
       Fear & Greed < 25 = +2  |  < 40 = +1  |  > 60 = -1  |  > 75 = -2
+        (market sentiment cycles matter even over months — full weight kept)
       ATH distance ≤-70% = +2 |  ≤-50% = +1 |  ≥-10% = -1
+        (best long-term value signal — full weight kept)
       30d momentum < -25% = +1 |  > +30% = -1
       Personal P&L > +50% = -1 (partial profit nudge)
 
@@ -326,9 +329,14 @@ def compute_signal(rsi, fg_value, price_vs_ath_pct, price_change_30d, pnl_pct,
       Vol/MCap     ≥ 5%  = +1  |  <  1%  = -1
 
     QUALITATIVE FUNDAMENTALS (via FUNDAMENTAL_TIERS)
-      Tier 1 (Blue Chip)             = +2   e.g. BTC, ETH
-      Tier 2 (Established)           = +1   e.g. BNB, SOL, LINK
-      Tier 3 (Speculative/Potential) =  0   e.g. TAO, RENDER
+      Tier 1 (Blue Chip)             = +3   e.g. BTC, ETH  — dominant factor for long-term
+      Tier 2 (Established)           = +2   e.g. BNB, SOL, LINK
+      Tier 3 (Speculative/Potential) =  0   e.g. TAO, RENDER — need strong price signals
+
+    CALIBRATED FOR: weeks-to-months holding period.
+    Blue chips (BTC, ETH) rate Buy/Strong Buy in neutral markets — always accumulate quality.
+    Speculative coins (TAO, RENDER) require deeper discounts to trigger Buy.
+    At bull tops: blue chips → Caution (don't add); speculative → Consider Selling (trim).
 
     LABELS: Strong Buy ≥+4 | Buy ≥+2 | Hold ≥0 | Caution ≥-3 | Consider Selling <-3
     """
@@ -337,10 +345,12 @@ def compute_signal(rsi, fg_value, price_vs_ath_pct, price_change_30d, pnl_pct,
     fund_reasons  = []
 
     # ── Price signals ─────────────────────────────────────────────────────────
+    # RSI weight reduced to ±1 at extremes (from ±2) because RSI is a 14-day
+    # indicator — too short-term to dominate decisions made every few weeks/months.
     if rsi is not None:
-        if rsi < 30:    score += 2; price_reasons.append(f"RSI {rsi} — oversold (buy zone)")
+        if rsi < 30:    score += 1; price_reasons.append(f"RSI {rsi} — oversold (potential entry)")
         elif rsi < 40:  score += 1; price_reasons.append(f"RSI {rsi} — leaning oversold")
-        elif rsi > 70:  score -= 2; price_reasons.append(f"RSI {rsi} — overbought (sell zone)")
+        elif rsi > 70:  score -= 1; price_reasons.append(f"RSI {rsi} — overbought (caution on adding)")
         elif rsi > 60:  score -= 1; price_reasons.append(f"RSI {rsi} — leaning overbought")
 
     if fg_value is not None:
@@ -511,7 +521,7 @@ tab0, tab1, tab2, tab3, tab4 = st.tabs(
 # ══════════════════════════════════════════════════════════════════════════════
 with tab0:
     st.header("🎯 Overall Analysis")
-    st.caption("Combined score: price signals (RSI, ATH distance, momentum) + financial fundamentals (market cap, liquidity) + qualitative fundamentals (technology tier, use case, ecosystem).")
+    st.caption("Combined score calibrated for weeks-to-months investing: qualitative fundamentals (technology tier) carry the most weight, followed by market sentiment (Fear & Greed) and ATH distance. RSI is intentionally down-weighted — it's a 14-day signal, too noisy for your timeframe.")
 
     scores    = [m["score"] for m in coin_metrics.values()]
     avg_score = sum(scores) / len(scores) if scores else 0
@@ -763,8 +773,8 @@ with tab3:
 | **7d / 30d %** | Moderate positive | Extreme >50% (FOMO) or deep negative |
 | **RSI** | 30–50 (healthy zone) | <20 or >80 (extremes) |
 
-**Qual. Tier scoring in signal:** Tier 1 = +2 pts · Tier 2 = +1 pt · Tier 3 = 0 pts
-This means blue-chip coins need fewer price signals to reach "Buy", while speculative coins require a stronger dip.
+**Qual. Tier scoring in signal:** Tier 1 = +3 pts · Tier 2 = +2 pts · Tier 3 = 0 pts
+Calibrated for a weeks-to-months holding style: blue chips (BTC, ETH) rate Buy/Strong Buy even in neutral markets — you should always be accumulating quality assets. Speculative coins (TAO, RENDER) need a genuine price dip to trigger Buy. At bull tops: blue chips → Caution (pause buying); speculative coins → Consider Selling (trim positions).
 """)
 
     def mcap_label(mc):
