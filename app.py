@@ -556,22 +556,57 @@ with tab0:
 
     fg_sent_html = md_to_html_bold(fg_sent)
     st.markdown(
-        f"""<div style="background:{bg};border-radius:12px;padding:20px 24px;margin-bottom:16px">
-        <div style="font-size:2rem;font-weight:700">{port_color} Portfolio Verdict: {port_label}</div>
-        <div style="color:#ccc;margin-top:6px">Average score: <b>{avg_score:+.1f}</b> across {len(scores)} coins
-        &nbsp;·&nbsp; {fg_sent_html}</div></div>""",
+        f"""<div style="background:{bg};border-radius:12px;padding:22px 28px;margin-bottom:20px">
+        <div style="font-size:1.9rem;font-weight:800;color:#ffffff;letter-spacing:-0.5px">
+            {port_color} Portfolio Verdict: {port_label}
+        </div>
+        <div style="color:#cccccc;margin-top:8px;font-size:0.95rem;line-height:1.5">
+            Average signal score: <b style="color:#fff">{avg_score:+.1f}</b>
+            across <b style="color:#fff">{len(scores)} coins</b>
+            &nbsp;&nbsp;·&nbsp;&nbsp;
+            {fg_sent_html}
+        </div></div>""",
         unsafe_allow_html=True
     )
 
-    k1, k2, k3, k4, k5 = st.columns(5)
-    k1.metric("🟢 Buy / Strong Buy", buys,      help="Score ≥ 2")
-    k2.metric("🟡 Hold",             holds,     help="Score 0–1")
-    k3.metric("🟠 Caution",          cautions,  help="Score −1 to −3")
-    k4.metric("🔴 Consider Selling", sell_warn, help="Score below −3")
-    fg_display = f"{fg_value} ({fg_label})" if fg_value else "—"
-    fg_delta   = "Extreme Fear ↓" if fg_value and fg_value < 25 else ("Extreme Greed ↑" if fg_value and fg_value > 75 else None)
-    k5.metric("😨 Fear & Greed", fg_display, delta=fg_delta,
-              delta_color="inverse" if fg_delta and "Greed" in fg_delta else "normal")
+    # ── KPI row — 4 columns, F&G gets extra width ─────────────────────────
+    k1, k2, k3, k4 = st.columns([1, 1, 1, 1])
+    k1.metric("🟢  Buy / Strong Buy", buys,      help="Score ≥ 2")
+    k2.metric("🟡  Hold",             holds,     help="Score 0 – 1")
+    k3.metric("🟠  Caution",          cautions,  help="Score −1 to −3")
+    k4.metric("🔴  Consider Selling", sell_warn, help="Score below −3")
+
+    # Fear & Greed as a styled info box — avoids truncation entirely
+    if fg_value is not None:
+        fg_bar_pct = fg_value          # 0–100
+        fg_color_hex = (
+            "#2d6a2d" if fg_value < 25 else
+            "#4a7a2d" if fg_value < 40 else
+            "#7a7a2d" if fg_value < 60 else
+            "#7a4a1a" if fg_value < 75 else
+            "#7a1a1a"
+        )
+        fg_icon = "😨" if fg_value < 25 else "😟" if fg_value < 40 else "😐" if fg_value < 60 else "😏" if fg_value < 75 else "🤑"
+        st.markdown(
+            f"""<div style="background:{fg_color_hex};border-radius:10px;padding:14px 20px;
+                            display:flex;align-items:center;gap:16px;margin-top:8px">
+                <div style="font-size:2.2rem">{fg_icon}</div>
+                <div>
+                    <div style="color:#aaa;font-size:0.78rem;font-weight:600;
+                                letter-spacing:0.08em;text-transform:uppercase">Fear &amp; Greed Index</div>
+                    <div style="font-size:1.6rem;font-weight:800;color:#fff">
+                        {fg_value} <span style="font-size:1rem;font-weight:400;color:#ddd">— {fg_label}</span>
+                    </div>
+                    <div style="background:rgba(255,255,255,0.15);border-radius:4px;height:6px;
+                                margin-top:6px;width:100%">
+                        <div style="background:#fff;border-radius:4px;height:6px;
+                                    width:{fg_bar_pct}%"></div>
+                    </div>
+                    <div style="color:#bbb;font-size:0.8rem;margin-top:4px">0 = Extreme Fear &nbsp;·&nbsp; 100 = Extreme Greed</div>
+                </div>
+            </div>""",
+            unsafe_allow_html=True
+        )
 
     st.divider()
 
