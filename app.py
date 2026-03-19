@@ -24,8 +24,8 @@ COINGECKO_IDS = list(DEFAULT_HOLDINGS.keys())
 HOLDINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "holdings.json")
 
 # ── Qualitative Fundamental Profiles ─────────────────────────────────────────
-# Tier 1 = Blue Chip (+2):  Proven, institutional-grade, irreplaceable infrastructure
-# Tier 2 = Established (+1): Solid use case, growing ecosystem, meaningful execution risk
+# Tier 1 = Blue Chip (+3):  Proven, institutional-grade, irreplaceable infrastructure
+# Tier 2 = Established (+2): Solid use case, growing ecosystem, meaningful execution risk
 # Tier 3 = Speculative (0):  Genuine innovation but early-stage and unproven at scale
 #
 # These scores add to the signal score so that strong fundamentals require fewer
@@ -300,6 +300,15 @@ def fmt_qty(q):
     if q is None: return "—"
     return f"{q:.6g}"
 
+def fmt_score(s):
+    """Show score as +5, -2, or plain 0 (not '+0')."""
+    return "0" if s == 0 else f"{s:+d}"
+
+def md_to_html_bold(text):
+    """Convert **word** markdown to <b>word</b> for use inside HTML strings."""
+    import re
+    return re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', text)
+
 # ── Signal logic ─────────────────────────────────────────────────────────────
 def score_to_label(score):
     if score >= 4:  return "Strong Buy",      "🟢"
@@ -527,13 +536,11 @@ with tab0:
     avg_score = sum(scores) / len(scores) if scores else 0
     port_label, port_color = score_to_label(round(avg_score))
 
-    buys     = sum(1 for s in scores if s >= 2)
-    holds    = sum(1 for s in scores if 0 <= s < 2)
-    cautions = sum(1 for s in scores if s < 0)
+    buys      = sum(1 for s in scores if s >= 2)
+    holds     = sum(1 for s in scores if 0 <= s < 2)
+    cautions  = sum(1 for s in scores if -3 <= s < 0)
+    sell_warn = sum(1 for s in scores if s < -3)
 
-    fg_sentiment = {
-        True:  ("Market is in **Extreme Fear** — historically a good time to accumulate.", fg_value < 25 if fg_value else False),
-    }
     if fg_value is not None:
         if fg_value < 25:   fg_sent = "Market is in **Extreme Fear** — historically a good time to accumulate."
         elif fg_value < 40: fg_sent = "Market is in **Fear** — cautious accumulation may be appropriate."
@@ -547,19 +554,24 @@ with tab0:
                   "Caution": "#2e1f0a", "Consider Selling": "#2e0a0a"}
     bg = verdict_bg.get(port_label, "#1a1a1a")
 
+    fg_sent_html = md_to_html_bold(fg_sent)
     st.markdown(
         f"""<div style="background:{bg};border-radius:12px;padding:20px 24px;margin-bottom:16px">
         <div style="font-size:2rem;font-weight:700">{port_color} Portfolio Verdict: {port_label}</div>
-        <div style="color:#aaa;margin-top:6px">Average score: <b>{avg_score:+.1f}</b> across {len(scores)} coins
-        &nbsp;·&nbsp; {fg_sent}</div></div>""",
+        <div style="color:#ccc;margin-top:6px">Average score: <b>{avg_score:+.1f}</b> across {len(scores)} coins
+        &nbsp;·&nbsp; {fg_sent_html}</div></div>""",
         unsafe_allow_html=True
     )
 
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Coins to Buy",     buys,     help="Score ≥ 2")
-    k2.metric("Coins to Hold",    holds,    help="Score 0–1")
-    k3.metric("Coins to Caution", cautions, help="Score < 0")
-    k4.metric("Fear & Greed", f"{fg_value} — {fg_label}" if fg_value else "—")
+    k1, k2, k3, k4, k5 = st.columns(5)
+    k1.metric("🟢 Buy / Strong Buy", buys,      help="Score ≥ 2")
+    k2.metric("🟡 Hold",             holds,     help="Score 0–1")
+    k3.metric("🟠 Caution",          cautions,  help="Score −1 to −3")
+    k4.metric("🔴 Consider Selling", sell_warn, help="Score below −3")
+    fg_display = f"{fg_value} ({fg_label})" if fg_value else "—"
+    fg_delta   = "Extreme Fear ↓" if fg_value and fg_value < 25 else ("Extreme Greed ↑" if fg_value and fg_value > 75 else None)
+    k5.metric("😨 Fear & Greed", fg_display, delta=fg_delta,
+              delta_color="inverse" if fg_delta and "Greed" in fg_delta else "normal")
 
     st.divider()
 
@@ -575,7 +587,7 @@ with tab0:
             "From ATH":   f"{m['ath_pct']:.0f}%" if m["ath_pct"] else "—",
             "30d %":      f"{m['ch30']:+.1f}%" if m["ch30"] else "—",
             "P&L %":      f"{m['pnl_pct']:+.1f}%" if m["pnl_pct"] is not None else "—",
-            "Score":      f"{m['score']:+d}",
+            "Score":      fmt_score(m["score"]),
             "Rating":     m["signal"],
         })
     st.dataframe(pd.DataFrame(rows_a), use_container_width=True, hide_index=True)
@@ -608,13 +620,13 @@ with tab0:
             dollars = invest_amt * pct
             ratio   = round(w / min_w, 1)
             alloc_rows.append({
-                "Coin":       f"{m['info']['name']} ({m['info']['symbol']})",
-                "Rating":     m["signal"],
-                "Score":      f"{m['score']:+d}",
-                "Weight":     f"{pct*100:.0f}%",
-                "Suggested $":f"${dollars:,.0f}",
-                "Est. Qty":   fmt_qty(dollars / m["cp"]) if m["cp"] else "—",
-                "Ratio":      f"{ratio:.1g}x",
+                "Coin":        f"{m['info']['name']} ({m['info']['symbol']})",
+                "Rating":      m["signal"],
+                "Score":       fmt_score(m["score"]),
+                "Weight":      f"{pct*100:.0f}%",
+                "Suggested $": f"${dollars:,.0f}",
+                "Est. Qty":    fmt_qty(dollars / m["cp"]) if m["cp"] and m["cp"] > 0 else "—",
+                "Ratio":       f"{ratio:.1g}x",
             })
         st.dataframe(pd.DataFrame(alloc_rows), use_container_width=True, hide_index=True)
 
@@ -673,7 +685,7 @@ with tab1:
 
     if fg_value:
         fg_color = "🟢" if fg_value < 25 else "🟡" if fg_value < 50 else "🟠" if fg_value < 75 else "🔴"
-        st.info(f"**Market Sentiment:** {fg_color} Fear & Greed = **{fg_value}** ({fg_label})")
+        st.info(f"**Market Sentiment:** {fg_color} Fear & Greed = **{fg_value}** ({fg_label})  ·  Rating column shows current Buy/Sell signal for each holding.")
 
     rows = []
     total_value = total_cost = 0.0
@@ -687,13 +699,17 @@ with tab1:
         cost       = qty * bp if bp > 0 else None
         pnl        = value - cost if cost else None
         pnl_pct    = (pnl / cost * 100) if cost else None
+        ch24       = md.get("price_change_percentage_24h")
         total_value += value
         if cost: total_cost += cost
+        m_signal   = coin_metrics.get(cid, {}).get("signal", "—")
         rows.append({
             "Coin":          f"{info['name']} ({info['symbol']})",
+            "Rating":        m_signal,
             "Qty":           fmt_qty(qty),
-            "Avg Buy Price": fmt_price(bp) if bp > 0 else "—",
-            "Current Price": fmt_price(cp),
+            "Avg Buy":       fmt_price(bp) if bp > 0 else "—",
+            "Price":         fmt_price(cp),
+            "24h %":         f"{ch24:+.1f}%" if ch24 is not None else "—",
             "Value":         f"${value:,.2f}",
             "P&L $":         f"${pnl:+,.2f}" if pnl is not None else "—",
             "P&L %":         f"{pnl_pct:+.1f}%" if pnl_pct is not None else "—",
@@ -728,32 +744,53 @@ with tab2:
     if fg_value:
         st.info(f"**Fear & Greed: {fg_value} — {fg_label}** · <25 = buy zone · >75 = sell zone")
 
-    # Quick summary row
+    # Quick summary table — all key numbers at a glance
     sig_rows = []
     for cid, m in coin_metrics.items():
-        sig_rows.append({"Coin": f"{m['info']['symbol']}", "Rating": m["signal"], "Score": f"{m['score']:+d}"})
+        sig_rows.append({
+            "Coin":       m["info"]["symbol"],
+            "Rating":     m["signal"],
+            "Score":      fmt_score(m["score"]),
+            "Price":      fmt_price(m["cp"]),
+            "RSI":        f"{m['rsi']}" if m["rsi"] else "—",
+            "From ATH":   f"{m['ath_pct']:.0f}%" if m["ath_pct"] else "—",
+            "30d %":      f"{m['ch30']:+.1f}%" if m["ch30"] else "—",
+            "P&L %":      f"{m['pnl_pct']:+.1f}%" if m["pnl_pct"] is not None else "—",
+        })
     st.dataframe(pd.DataFrame(sig_rows), use_container_width=True, hide_index=True)
     st.divider()
 
     for cid, m in coin_metrics.items():
         info = m["info"]
-        with st.expander(f"{info['name']} ({info['symbol']}) — {m['signal']}  (score {m['score']:+d})", expanded=False):
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Price", fmt_price(m["cp"]))
-            c2.metric("RSI (14d)", f"{m['rsi']}" if m["rsi"] else "—",
+        with st.expander(
+            f"{info['name']} ({info['symbol']}) — {m['signal']} (score {fmt_score(m['score'])})",
+            expanded=False
+        ):
+            c1, c2, c3, c4, c5 = st.columns(5)
+            c1.metric("Price",      fmt_price(m["cp"]))
+            c2.metric("P&L",        f"{m['pnl_pct']:+.1f}%" if m["pnl_pct"] is not None else "—")
+            c3.metric("RSI (14d)",  f"{m['rsi']}" if m["rsi"] else "—",
                       help="<30 oversold · >70 overbought")
-            c3.metric("From ATH", f"{m['ath_pct']:.1f}%" if m["ath_pct"] else "—")
-            c4.metric("30d Change", f"{m['ch30']:+.1f}%" if m["ch30"] else "—")
+            c4.metric("From ATH",   f"{m['ath_pct']:.1f}%" if m["ath_pct"] else "—")
+            c5.metric("30d Change", f"{m['ch30']:+.1f}%" if m["ch30"] else "—")
 
             if m["tier_info"]:
                 st.caption(f"🏛️ **{m['tier_label']}** — {m['tier_info'].get('use_case', '')}")
 
             if m["reasons"]:
-                st.write("**Factors driving this rating:**")
-                for r in m["reasons"]:
-                    st.write(f"  • {r}")
+                # Split into price signals vs fundamental signals for clarity
+                price_rs = [r for r in m["reasons"] if any(k in r for k in ["RSI", "Fear", "ATH", "30d", "Down", "Up ", "Near ATH"])]
+                fund_rs  = [r for r in m["reasons"] if r not in price_rs]
+                if price_rs:
+                    st.markdown("**📈 Price signals:**")
+                    for r in price_rs:
+                        st.markdown(f"- {r}")
+                if fund_rs:
+                    st.markdown("**🏛️ Fundamental signals:**")
+                    for r in fund_rs:
+                        st.markdown(f"- {r}")
             else:
-                st.write("No strong signals at this time.")
+                st.info("No strong signals in either direction at this time.")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 3: FUNDAMENTALS
