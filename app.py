@@ -319,7 +319,8 @@ def score_to_label(score):
 
 def compute_signal(rsi, fg_value, price_vs_ath_pct, price_change_30d, pnl_pct,
                    market_cap=None, vol_mcap_pct=None,
-                   tier_score=0, tier_reason=""):
+                   tier_score=0, tier_reason="",
+                   coin_alloc_pct=None, tier3_alloc_pct=None):
     """
     Score breakdown (all additive):
 
@@ -344,6 +345,11 @@ def compute_signal(rsi, fg_value, price_vs_ath_pct, price_change_30d, pnl_pct,
 
     All coins receive qualitative fundamental credit reflecting their long-term thesis.
     Tier difference ensures blue chips still outrank speculative in equal market conditions.
+
+    PORTFOLIO COMPOSITION
+      Single-coin weight  > 30% of portfolio = -1  (concentrated position, adds risk)
+      Tier 3 total weight > 40% of portfolio = -1  (applied to Tier 3 coins only — high
+                                                     speculative exposure, be selective)
 
     CALIBRATED FOR: weeks-to-months holding period.
     Blue chips (BTC, ETH) rate Buy/Strong Buy in neutral markets — always accumulate quality.
@@ -396,6 +402,19 @@ def compute_signal(rsi, fg_value, price_vs_ath_pct, price_change_30d, pnl_pct,
     if tier_score != 0 and tier_reason:
         score += tier_score
         fund_reasons.append(tier_reason)
+
+    # ── Portfolio composition ──────────────────────────────────────────────────
+    if coin_alloc_pct is not None and coin_alloc_pct > 30:
+        score -= 1
+        fund_reasons.append(
+            f"Concentrated position — {coin_alloc_pct:.0f}% of your portfolio in this coin"
+        )
+
+    if tier3_alloc_pct is not None and tier3_alloc_pct > 40 and tier_score == 1:
+        score -= 1
+        fund_reasons.append(
+            f"High speculative exposure — Tier 3 coins are {tier3_alloc_pct:.0f}% of your portfolio"
+        )
 
     label, color = score_to_label(score)
     return f"{color} {label}", price_reasons + fund_reasons, score
@@ -489,6 +508,21 @@ if market_result is None:
 fg_value, fg_label = fetch_fear_greed()
 
 # ── Pre-compute all coin metrics ──────────────────────────────────────────────
+
+# Pass 1: compute raw coin values for portfolio composition signals
+_raw_values = {
+    cid: info["qty"] * market.get(cid, {}).get("current_price", 0)
+    for cid, info in st.session_state.holdings.items()
+}
+_total_portfolio = sum(_raw_values.values()) or 1  # guard against empty portfolio
+
+# Tier 3 combined allocation (TAO + RENDER or any tier_score == 1 coin)
+_tier3_value = sum(
+    v for cid, v in _raw_values.items()
+    if FUNDAMENTAL_TIERS.get(cid, {}).get("tier_score", 0) == 1
+)
+_tier3_alloc_pct = (_tier3_value / _total_portfolio * 100) if _total_portfolio else 0
+
 coin_metrics = {}
 for cid, info in st.session_state.holdings.items():
     md         = market.get(cid, {})
@@ -512,9 +546,13 @@ for cid, info in st.session_state.holdings.items():
         if tier_info else ""
     )
 
+    # Per-coin allocation % for portfolio composition signals
+    coin_alloc_pct = (_raw_values.get(cid, 0) / _total_portfolio * 100) if _total_portfolio else 0
+
     signal, reasons, score = compute_signal(
         rsi, fg_value, ath_pct, ch30, pnl_pct, mcap, vol_mcap,
-        tier_score=tier_score, tier_reason=tier_reason
+        tier_score=tier_score, tier_reason=tier_reason,
+        coin_alloc_pct=coin_alloc_pct, tier3_alloc_pct=_tier3_alloc_pct
     )
     coin_metrics[cid] = dict(
         info=info, md=md, cp=cp, ath=ath, mcap=mcap,
