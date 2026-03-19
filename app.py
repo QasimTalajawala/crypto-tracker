@@ -130,7 +130,7 @@ FUNDAMENTAL_TIERS = {
     "bittensor": {
         "tier": 3,
         "tier_label": "Tier 3 — Speculative / High Potential",
-        "tier_score": 0,
+        "tier_score": 1,
         "use_case": "Decentralised AI/ML network — miners compete by training machine learning models",
         "strengths": [
             "Unique model: mining = training AI models — aligns crypto incentives with AI",
@@ -150,7 +150,7 @@ FUNDAMENTAL_TIERS = {
     "render-token": {
         "tier": 3,
         "tier_label": "Tier 3 — Speculative / High Potential",
-        "tier_score": 0,
+        "tier_score": 1,
         "use_case": "Decentralised GPU marketplace — connecting idle GPUs to 3D rendering and AI compute jobs",
         "strengths": [
             "Real, tangible use case — creators pay GPU providers for rendering",
@@ -338,13 +338,16 @@ def compute_signal(rsi, fg_value, price_vs_ath_pct, price_change_30d, pnl_pct,
       Vol/MCap     ≥ 5%  = +1  |  <  1%  = -1
 
     QUALITATIVE FUNDAMENTALS (via FUNDAMENTAL_TIERS)
-      Tier 1 (Blue Chip)             = +3   e.g. BTC, ETH  — dominant factor for long-term
-      Tier 2 (Established)           = +2   e.g. BNB, SOL, LINK
-      Tier 3 (Speculative/Potential) =  0   e.g. TAO, RENDER — need strong price signals
+      Tier 1 (Blue Chip)             = +3   e.g. BTC, ETH  — proven, institutional-grade
+      Tier 2 (Established)           = +2   e.g. BNB, SOL, LINK — strong but less mature
+      Tier 3 (Speculative/Potential) = +1   e.g. TAO, RENDER — real use case, higher risk
+
+    All coins receive qualitative fundamental credit reflecting their long-term thesis.
+    Tier difference ensures blue chips still outrank speculative in equal market conditions.
 
     CALIBRATED FOR: weeks-to-months holding period.
     Blue chips (BTC, ETH) rate Buy/Strong Buy in neutral markets — always accumulate quality.
-    Speculative coins (TAO, RENDER) require deeper discounts to trigger Buy.
+    Speculative coins (TAO, RENDER) rate Hold/Buy in neutral markets — accumulate on dips.
     At bull tops: blue chips → Caution (don't add); speculative → Consider Selling (trim).
 
     LABELS: Strong Buy ≥+4 | Buy ≥+2 | Hold ≥0 | Caution ≥-3 | Consider Selling <-3
