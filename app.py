@@ -292,13 +292,19 @@ def fetch_rsi(coin_id: str, days: int = 60):
       2. Smoothing: avg = (prev_avg * 13 + current) / 14  (Wilder's EMA)
     60 days gives ~46 stable RSI readings — plenty for a reliable value.
     Cache TTL is 24h: RSI changes slowly and this app is for weeks-to-months decisions.
+
+    IMPORTANT: single attempt, 4s timeout, no retries, no sleep.
+    RSI is non-critical — the page loads fine with RSI = None.
+    Retrying a rate-limited CoinGecko endpoint wastes 6-36s per coin × 7 coins.
     """
     url = (
         f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"
         f"?vs_currency=usd&days={days}&interval=daily"
     )
     try:
-        r = _get_with_retry(url)
+        r = requests.get(url, timeout=4)
+        if r.status_code != 200:
+            return None
         prices = [p[1] for p in r.json().get("prices", [])]
         if len(prices) < 16:   # need at least 15 deltas for 1 seed RSI value
             return None
