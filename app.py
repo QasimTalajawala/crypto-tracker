@@ -567,6 +567,96 @@ if market_result is None:
     st.warning("⚠️ CoinGecko rate limit — showing last known prices. Refreshes in ~10 min.", icon="⏳")
 fg_value, fg_label = fetch_fear_greed()
 
+# ── Sell signal thresholds (by tier_score) ───────────────────────────────────
+# (trim_25, trim_50, major_profits, full_exit)
+# Higher-tier coins need stronger signals before a sell is warranted.
+# Tier 1 never triggers full exit — accumulate quality through cycles.
+SELL_THRESHOLDS = {
+    3: (5,  8, 10, 99),   # Tier 1 — very high bar; never "full exit"
+    2: (4,  7,  9, 14),   # Tier 2 — quality; sell reluctantly
+    1: (3,  5,  8, 12),   # Tier 3 — conditional; lower profit-taking bar
+    0: (2,  4,  7, 10),   # Tier 4 — low conviction; exit at lower bar
+}
+
+SELL_URGENCY = {
+    "⚠️ Consider Full Exit":          4,
+    "📉 Take Major Profits (50–75%)": 3,
+    "📤 Trim ~50%":                   2,
+    "💸 Take Partial Profits (~25%)": 1,
+    "✅ Hold":                        0,
+}
+
+def compute_sell_signal(pnl_pct, price_vs_ath_pct, fg_value, price_change_30d,
+                        rsi, tier_score, coin_alloc_pct=None):
+    """
+    Determines when and how much to sell. Separate from compute_signal so that
+    a coin can simultaneously be a good BUY relative to its last dip and still
+    have profit-taking signals from a prior run-up.
+
+    Score signals (additive):
+      P&L ≥ 200%           = +3  |  ≥ 100% = +2  |  ≥ 50% = +1
+      ATH ≥ −10%           = +3  |  ≥ −20% = +2  |  ≥ −30% = +1
+      F&G > 75             = +2  |  > 60   = +1
+      RSI > 70             = +1
+      30d ≥ +50%           = +2  |  ≥ +30% = +1
+      Concentration ≥ 40%  = +2  |  ≥ 30%  = +1
+      Tier 4, P&L > 20%    = +2  (low conviction — take profits sooner)
+      Tier 3, P&L > 20%    = +1  (conditional — lower bar than core holdings)
+
+    Thresholds are tier-adjusted so blue chips only flag at peaks while
+    speculative coins flag much earlier.
+    """
+    score   = 0
+    reasons = []
+
+    # ── Personal P&L ──────────────────────────────────────────────────────────
+    if pnl_pct is not None and pnl_pct > 0:
+        if   pnl_pct >= 200: score += 3; reasons.append(f"Up {pnl_pct:.0f}% on your buy price — major gains, time to de-risk")
+        elif pnl_pct >= 100: score += 2; reasons.append(f"Up {pnl_pct:.0f}% on your buy price — large gains, take some off the table")
+        elif pnl_pct >=  50: score += 1; reasons.append(f"Up {pnl_pct:.0f}% on your buy price — solid gains, consider partial profit")
+
+    # ── ATH proximity ─────────────────────────────────────────────────────────
+    if price_vs_ath_pct is not None:
+        if   price_vs_ath_pct >= -10: score += 3; reasons.append(f"Only {abs(price_vs_ath_pct):.0f}% below ATH — near historical peak, risk/reward is poor")
+        elif price_vs_ath_pct >= -20: score += 2; reasons.append(f"{abs(price_vs_ath_pct):.0f}% below ATH — approaching historical peak zone")
+        elif price_vs_ath_pct >= -30: score += 1; reasons.append(f"{abs(price_vs_ath_pct):.0f}% below ATH — elevated, in upper range")
+
+    # ── Market sentiment ──────────────────────────────────────────────────────
+    if fg_value is not None:
+        if   fg_value > 75: score += 2; reasons.append(f"Fear & Greed {fg_value} — Extreme Greed, market euphoric")
+        elif fg_value > 60: score += 1; reasons.append(f"Fear & Greed {fg_value} — Greed, market overheated")
+
+    # ── Short-term momentum ───────────────────────────────────────────────────
+    if rsi is not None and rsi > 70:
+        score += 1; reasons.append(f"RSI {rsi} — overbought short-term")
+
+    if price_change_30d is not None:
+        if   price_change_30d >= 50: score += 2; reasons.append(f"+{price_change_30d:.0f}% in 30 days — parabolic move, often mean-reverts")
+        elif price_change_30d >= 30: score += 1; reasons.append(f"+{price_change_30d:.0f}% in 30 days — strong run, consider taking some off")
+
+    # ── Portfolio concentration ───────────────────────────────────────────────
+    if coin_alloc_pct is not None:
+        if   coin_alloc_pct >= 40: score += 2; reasons.append(f"{coin_alloc_pct:.0f}% of your portfolio — dangerously concentrated, trim to rebalance")
+        elif coin_alloc_pct >= 30: score += 1; reasons.append(f"{coin_alloc_pct:.0f}% of your portfolio — concentrated, consider trimming")
+
+    # ── Tier-based threshold adjustment ──────────────────────────────────────
+    # Low-conviction coins should be trimmed sooner once profitable
+    if pnl_pct is not None and pnl_pct > 20:
+        if   tier_score == 0: score += 2; reasons.append("Tier 4 (Low Conviction) — low-thesis coin in profit; take gains at lower bar than quality holdings")
+        elif tier_score == 1: score += 1; reasons.append("Tier 3 (Conditional) — lower profit-taking threshold than core holdings")
+
+    # ── Determine action ──────────────────────────────────────────────────────
+    t25, t50, tmajor, tfull = SELL_THRESHOLDS.get(tier_score, SELL_THRESHOLDS[0])
+
+    if   score >= tfull:  action = "⚠️ Consider Full Exit";          sell_pct = "100%"
+    elif score >= tmajor: action = "📉 Take Major Profits (50–75%)"; sell_pct = "50–75%"
+    elif score >= t50:    action = "📤 Trim ~50%";                    sell_pct = "~50%"
+    elif score >= t25:    action = "💸 Take Partial Profits (~25%)";  sell_pct = "~25%"
+    else:                 action = "✅ Hold";                          sell_pct = "0%"
+
+    return action, sell_pct, reasons, score
+
+
 # ── Pre-compute all coin metrics ──────────────────────────────────────────────
 
 # Pass 1: compute raw coin values for portfolio composition signals
@@ -614,16 +704,23 @@ for cid, info in st.session_state.holdings.items():
         tier_score=tier_score, tier_reason=tier_reason,
         coin_alloc_pct=coin_alloc_pct, tier3_alloc_pct=_tier3_alloc_pct
     )
+    sell_action, sell_pct, sell_reasons, sell_score = compute_sell_signal(
+        pnl_pct, ath_pct, fg_value, ch30, rsi, tier_score,
+        coin_alloc_pct=coin_alloc_pct
+    )
     coin_metrics[cid] = dict(
         info=info, md=md, cp=cp, ath=ath, mcap=mcap,
         vol_mcap=vol_mcap, ath_pct=ath_pct, ch30=ch30,
         pnl_pct=pnl_pct, rsi=rsi, signal=signal, reasons=reasons, score=score,
         value=info["qty"] * cp,
-        tier_info=tier_info, tier_label=tier_label, tier_score=tier_score
+        tier_info=tier_info, tier_label=tier_label, tier_score=tier_score,
+        sell_action=sell_action, sell_pct=sell_pct,
+        sell_reasons=sell_reasons, sell_score=sell_score,
+        coin_alloc_pct=coin_alloc_pct,
     )
 
-tab0, tab1, tab2, tab3, tab4 = st.tabs(
-    ["🎯 Analysis", "💼 Portfolio", "🚦 Signals", "📊 Fundamentals", "👀 Watchlist"]
+tab0, tab1, tab2, tab3, tab4, tab5 = st.tabs(
+    ["🎯 Analysis", "💼 Portfolio", "🚦 Signals", "📊 Fundamentals", "👀 Watchlist", "📤 Exit Strategy"]
 )
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1075,6 +1172,153 @@ with tab4:
                 "Signal":     signal,
             })
         st.dataframe(pd.DataFrame(rows_w), use_container_width=True, hide_index=True)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 5: EXIT STRATEGY
+# ══════════════════════════════════════════════════════════════════════════════
+with tab5:
+    st.header("📤 Exit Strategy")
+    st.caption(
+        "When to sell, how much, and why — based on your personal P&L, current price vs ATH, "
+        "market sentiment, and each coin's investment tier. Tier 4 coins (low conviction) are trimmed "
+        "at lower thresholds than blue chips. Read the reasons before acting."
+    )
+
+    # ── Global market context banner ──────────────────────────────────────────
+    if fg_value is not None:
+        if fg_value > 75:
+            st.warning(
+                f"⚠️ **Market-wide caution:** Fear & Greed is {fg_value} (Extreme Greed). "
+                "Historically, extreme greed precedes corrections. Consider reducing across the board, "
+                "starting with lowest-conviction holdings.",
+                icon="🔴"
+            )
+        elif fg_value > 60:
+            st.info(
+                f"📊 Fear & Greed is {fg_value} (Greed). Market is running hot — favour taking "
+                "partial profits on anything near ATH or significantly in the green.",
+                icon="🟡"
+            )
+        elif fg_value < 25:
+            st.success(
+                f"📊 Fear & Greed is {fg_value} (Extreme Fear). Market is oversold — this is "
+                "generally not the time to sell. Hold or accumulate unless you need liquidity.",
+                icon="🟢"
+            )
+
+    # ── Sort coins by sell urgency (most urgent first) ─────────────────────────
+    sorted_coins = sorted(
+        coin_metrics.items(),
+        key=lambda kv: SELL_URGENCY.get(kv[1]["sell_action"], 0),
+        reverse=True
+    )
+
+    # ── Summary KPI row ────────────────────────────────────────────────────────
+    urgency_counts = {"exit": 0, "major": 0, "trim": 0, "hold": 0}
+    for _, m in sorted_coins:
+        u = SELL_URGENCY.get(m["sell_action"], 0)
+        if   u >= 4: urgency_counts["exit"]  += 1
+        elif u >= 3: urgency_counts["major"] += 1
+        elif u >= 1: urgency_counts["trim"]  += 1
+        else:        urgency_counts["hold"]  += 1
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("✅ Hold",               urgency_counts["hold"],  help="No sell signals — no action needed")
+    k2.metric("💸 Take Profits / Trim", urgency_counts["trim"],  help="Partial profit-taking recommended")
+    k3.metric("📉 Major Profits",       urgency_counts["major"], help="Significant sell signal — 50–75%")
+    k4.metric("⚠️ Exit Signal",         urgency_counts["exit"],  help="Strong signal to fully exit position")
+
+    st.divider()
+
+    # ── Per-coin sell recommendation expanders ─────────────────────────────────
+    action_colors = {
+        "⚠️ Consider Full Exit":          "#3a1a1a",
+        "📉 Take Major Profits (50–75%)": "#2e1a1a",
+        "📤 Trim ~50%":                   "#2e2316",
+        "💸 Take Partial Profits (~25%)": "#1a2316",
+        "✅ Hold":                        "#1a1a2e",
+    }
+    action_borders = {
+        "⚠️ Consider Full Exit":          "#cc3333",
+        "📉 Take Major Profits (50–75%)": "#cc5533",
+        "📤 Trim ~50%":                   "#cc9933",
+        "💸 Take Partial Profits (~25%)": "#55aa55",
+        "✅ Hold":                        "#3355aa",
+    }
+
+    for cid, m in sorted_coins:
+        info       = m["info"]
+        sell_act   = m["sell_action"]
+        sell_pct   = m["sell_pct"]
+        sell_rsns  = m["sell_reasons"]
+        sell_sc    = m["sell_score"]
+        pnl        = m["pnl_pct"]
+        alloc      = m["coin_alloc_pct"]
+        tier_lbl   = m["tier_label"]
+
+        pnl_str   = f"{pnl:+.1f}%" if pnl is not None else "—"
+        alloc_str = f"{alloc:.1f}%" if alloc is not None else "—"
+
+        abg  = action_colors.get(sell_act,  "#1a1a1a")
+        abdr = action_borders.get(sell_act, "#555")
+
+        with st.expander(
+            f"**{info['name']} ({info['symbol']})** — {sell_act}  ·  Sell: {sell_pct}",
+            expanded=(sell_sc >= 3)   # auto-expand urgent coins
+        ):
+            # Action banner
+            st.markdown(
+                f"<div style='background:{abg};border-left:4px solid {abdr};"
+                f"border-radius:0 8px 8px 0;padding:12px 16px;margin-bottom:12px'>"
+                f"<div style='font-size:0.75rem;color:#aaa;margin-bottom:4px;letter-spacing:0.05em'>RECOMMENDATION</div>"
+                f"<div style='font-size:1.05rem;font-weight:600'>{sell_act}</div>"
+                f"<div style='font-size:0.88rem;margin-top:4px'>Suggested sell: <b>{sell_pct}</b> of your position</div>"
+                f"</div>",
+                unsafe_allow_html=True
+            )
+
+            # Context metrics
+            cx1, cx2, cx3, cx4 = st.columns(4)
+            cx1.metric("Your P&L",       pnl_str)
+            cx2.metric("Portfolio %",    alloc_str)
+            cx3.metric("Tier",           tier_lbl.split("—")[0].strip())
+            cx4.metric("Sell Score",     sell_sc)
+
+            # Reasons
+            if sell_rsns:
+                st.markdown("**Why:**")
+                for r in sell_rsns:
+                    st.markdown(f"- {r}")
+            else:
+                st.markdown("_No sell signals at this time. Price, sentiment, and gains are all within normal range._")
+
+            # Guidance note for "Hold" coins
+            if sell_sc == 0:
+                st.caption(
+                    "Nothing to act on right now. Check back when: price approaches ATH, "
+                    "Fear & Greed enters Greed/Extreme Greed, or your P&L exceeds 50%+."
+                )
+
+    # ── What to watch for ─────────────────────────────────────────────────────
+    st.divider()
+    with st.expander("📋 General exit rules — when to revisit this tab", expanded=False):
+        st.markdown("""
+**Trigger conditions to check Exit Strategy immediately:**
+
+| Signal | Threshold | Action |
+|--------|-----------|--------|
+| Fear & Greed | > 75 (Extreme Greed) | Review all positions, start trimming weakest |
+| Any coin from ATH | Within 15% | Check if P&L > 50% — take partial profits |
+| Single coin P&L | > 100% | Always take at least 25% off the table |
+| Tier 4 coin P&L | > 30% | Take profits — low conviction, don't let gains evaporate |
+| Single coin allocation | > 35% of portfolio | Trim regardless of market conditions |
+| Fundamental change | Tier downgrade or thesis breaks | Exit immediately, not gradually |
+
+**Blue chip rule (BTC, ETH):** Never sell your entire position. These are core holds — sell 25–50% at peaks to redeploy at the next dip, but always keep a base position.
+
+**Tier 4 rule (TAO):** If the coin is profitable and the fundamental thesis has not strengthened in 6 months, reduce position. Holding a speculative coin with a weakening thesis is a trap.
+""")
+
 
 st.divider()
 st.caption(
