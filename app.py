@@ -258,6 +258,14 @@ if "watchlist" not in st.session_state:
     st.session_state.watchlist = []
 if "rsi_cache" not in st.session_state:
     st.session_state.rsi_cache = {}
+if "last_market" not in st.session_state:
+    st.session_state.last_market = {}
+if "last_fg" not in st.session_state:
+    st.session_state.last_fg = (None, "Unknown")
+if "market_fetched_at" not in st.session_state:
+    st.session_state.market_fetched_at = 0.0
+if "fg_fetched_at" not in st.session_state:
+    st.session_state.fg_fetched_at = 0.0
 
 # ── API helpers ──────────────────────────────────────────────────────────────
 def _get_with_retry(url, timeout=10, retries=3):
@@ -281,7 +289,9 @@ def fetch_market_data(coin_ids: tuple):
         "&price_change_percentage=7d,30d&sparkline=false"
     )
     try:
-        r = _get_with_retry(url)
+        r = requests.get(url, timeout=5)
+        if r.status_code != 200:
+            return None
         return {c["id"]: c for c in r.json()}
     except Exception:
         return None
@@ -338,7 +348,7 @@ def fetch_rsi(coin_id: str, days: int = 60):
 @st.cache_data(ttl=3600)
 def fetch_fear_greed():
     try:
-        r = requests.get("https://api.alternative.me/fng/?limit=1", timeout=10)
+        r = requests.get("https://api.alternative.me/fng/?limit=1", timeout=4)
         d = r.json()["data"][0]
         return int(d["value"]), d["value_classification"]
     except Exception:
@@ -566,21 +576,11 @@ with st.sidebar:
                 st.session_state.watchlist.remove(wid)
                 st.rerun()
 
-# ── Fetch data ────────────────────────────────────────────────────────────────
-all_ids = tuple(list(st.session_state.holdings.keys()) + st.session_state.watchlist)
-
-_loading_placeholder = st.empty()
-with _loading_placeholder.container():
-    with st.spinner("Loading market data…"):
-        market_result = fetch_market_data(all_ids)
-        fg_value, fg_label = fetch_fear_greed()
-_loading_placeholder.empty()
-
-if market_result is not None:
-    st.session_state["last_market"] = market_result
-market = st.session_state.get("last_market", {})
-if market_result is None:
-    st.warning("⚠️ CoinGecko rate limit — showing last known prices. Refreshes in ~10 min.", icon="⏳")
+# ── Data from session state — populated in post-render pass ───────────────────
+# Page renders instantly from cache; data is fetched at the bottom and rerun injected.
+all_ids    = tuple(list(st.session_state.holdings.keys()) + st.session_state.watchlist)
+market     = st.session_state.last_market
+fg_value, fg_label = st.session_state.last_fg
 
 # ── Sell signal thresholds (by tier_score) ───────────────────────────────────
 # (trim_25, trim_50, major_profits, full_exit)
@@ -1337,14 +1337,42 @@ with tab5:
 
 
 # ── Post-render RSI loading ───────────────────────────────────────────────────
-# RSI is fetched AFTER the page renders so the user sees content immediately.
-# Stored in session_state so subsequent interactions are instant.
+# ── Post-render data fetch ────────────────────────────────────────────────────
+# All API calls happen AFTER the page renders so the user always sees content
+# immediately. Session state acts as the display cache; @st.cache_data prevents
+# duplicate HTTP requests across reruns and users.
+_now = time.time()
+_need_rerun = False
+
+# Market prices — refresh every 10 min
+if not st.session_state.last_market or (_now - st.session_state.market_fetched_at) >= 600:
+    _all_ids = tuple(list(st.session_state.holdings.keys()) + st.session_state.watchlist)
+    with st.spinner("📡 Loading market prices…"):
+        _mr = fetch_market_data(_all_ids)
+    if _mr:
+        st.session_state.last_market = _mr
+        st.session_state.market_fetched_at = _now
+    _need_rerun = True
+
+# Fear & Greed — refresh every 1 hr
+if st.session_state.last_fg[0] is None or (_now - st.session_state.fg_fetched_at) >= 3600:
+    _fgv, _fgl = fetch_fear_greed()
+    if _fgv is not None:
+        st.session_state.last_fg = (_fgv, _fgl)
+        st.session_state.fg_fetched_at = _now
+    if not _need_rerun:
+        _need_rerun = True
+
+# RSI — per-coin, per-session (skip if already rererunning to avoid double rerun)
 _all_tracked = list(st.session_state.holdings.keys()) + st.session_state.watchlist
 _missing_rsi = [cid for cid in _all_tracked if cid not in st.session_state.rsi_cache]
-if _missing_rsi:
-    with st.spinner(f"📡 Loading RSI for {len(_missing_rsi)} coin(s)… (cached for this session)"):
+if _missing_rsi and not _need_rerun:
+    with st.spinner(f"📡 Loading RSI for {len(_missing_rsi)} coin(s)…"):
         for cid in _missing_rsi:
             st.session_state.rsi_cache[cid] = fetch_rsi(cid)
+    _need_rerun = True
+
+if _need_rerun:
     st.rerun()
 
 st.divider()
