@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 import json
 import os
+import re
 import time
 from datetime import datetime
 
@@ -362,7 +363,6 @@ def fmt_score(s):
 
 def md_to_html_bold(text):
     """Convert **word** markdown to <b>word</b> for use inside HTML strings."""
-    import re
     return re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', text)
 
 # ── Signal logic ─────────────────────────────────────────────────────────────
@@ -376,7 +376,7 @@ def score_to_label(score):
 def compute_signal(rsi, fg_value, price_vs_ath_pct, price_change_30d, pnl_pct,
                    market_cap=None, vol_mcap_pct=None,
                    tier_score=0, tier_reason="",
-                   coin_alloc_pct=None, tier3_alloc_pct=None):
+                   coin_alloc_pct=None, speculative_alloc_pct=None):
     """
     Score breakdown (all additive):
 
@@ -405,9 +405,9 @@ def compute_signal(rsi, fg_value, price_vs_ath_pct, price_change_30d, pnl_pct,
     is not convinced the investment thesis is strong enough to reward buying in neutral markets.
 
     PORTFOLIO COMPOSITION
-      Single-coin weight  > 30% of portfolio = -1  (concentrated position, adds risk)
-      Tier 3 total weight > 40% of portfolio = -1  (applied to Tier 3 coins only — high
-                                                     speculative exposure, be selective)
+      Single-coin weight         > 30% of portfolio = -1  (concentrated position, adds risk)
+      Tier 3+4 combined weight   > 40% of portfolio = -1  (applied to Tier 3/4 coins — high
+                                                            speculative/conditional exposure)
 
     CALIBRATED FOR: weeks-to-months holding period.
     Blue chips (BTC, ETH) rate Buy/Strong Buy in neutral markets — always accumulate quality.
@@ -470,10 +470,10 @@ def compute_signal(rsi, fg_value, price_vs_ath_pct, price_change_30d, pnl_pct,
             f"Concentrated position — {coin_alloc_pct:.0f}% of your portfolio in this coin"
         )
 
-    if tier3_alloc_pct is not None and tier3_alloc_pct > 40 and tier_score == 1:
+    if speculative_alloc_pct is not None and speculative_alloc_pct > 40 and tier_score <= 1:
         score -= 1
         fund_reasons.append(
-            f"High speculative exposure — Tier 3 coins are {tier3_alloc_pct:.0f}% of your portfolio"
+            f"High speculative exposure — Tier 3/4 coins are {speculative_alloc_pct:.0f}% of your portfolio"
         )
 
     label, color = score_to_label(score)
@@ -666,12 +666,13 @@ _raw_values = {
 }
 _total_portfolio = sum(_raw_values.values()) or 1  # guard against empty portfolio
 
-# Tier 3 combined allocation (TAO + RENDER or any tier_score == 1 coin)
-_tier3_value = sum(
+# Speculative combined allocation — Tier 3 (score=1) + Tier 4 (score=0) coins
+# Used to penalise over-concentration in conditional/low-conviction holdings
+_speculative_value = sum(
     v for cid, v in _raw_values.items()
-    if FUNDAMENTAL_TIERS.get(cid, {}).get("tier_score", 0) == 1
+    if FUNDAMENTAL_TIERS.get(cid, {}).get("tier_score", 3) <= 1  # 3 is default (safe fallback)
 )
-_tier3_alloc_pct = (_tier3_value / _total_portfolio * 100) if _total_portfolio else 0
+_speculative_alloc_pct = (_speculative_value / _total_portfolio * 100) if _total_portfolio else 0
 
 coin_metrics = {}
 for cid, info in st.session_state.holdings.items():
@@ -702,7 +703,7 @@ for cid, info in st.session_state.holdings.items():
     signal, reasons, score = compute_signal(
         rsi, fg_value, ath_pct, ch30, pnl_pct, mcap, vol_mcap,
         tier_score=tier_score, tier_reason=tier_reason,
-        coin_alloc_pct=coin_alloc_pct, tier3_alloc_pct=_tier3_alloc_pct
+        coin_alloc_pct=coin_alloc_pct, speculative_alloc_pct=_speculative_alloc_pct
     )
     sell_action, sell_pct, sell_reasons, sell_score = compute_sell_signal(
         pnl_pct, ath_pct, fg_value, ch30, rsi, tier_score,
@@ -813,15 +814,14 @@ with tab0:
     rows_a = []
     for cid, m in coin_metrics.items():
         rows_a.append({
-            "Coin":       f"{m['info']['name']} ({m['info']['symbol']})",
-            "Qual. Tier": m["tier_label"],
-            "Price":      fmt_price(m["cp"]),
-            "RSI":        f"{m['rsi']}" if m["rsi"] else "—",
-            "From ATH":   f"{m['ath_pct']:.0f}%" if m["ath_pct"] else "—",
-            "30d %":      f"{m['ch30']:+.1f}%" if m["ch30"] else "—",
-            "P&L %":      f"{m['pnl_pct']:+.1f}%" if m["pnl_pct"] is not None else "—",
-            "Score":      fmt_score(m["score"]),
-            "Rating":     m["signal"],
+            "Coin":     f"{m['info']['name']} ({m['info']['symbol']})",
+            "Rating":   m["signal"],
+            "Score":    fmt_score(m["score"]),
+            "Price":    fmt_price(m["cp"]),
+            "P&L %":    f"{m['pnl_pct']:+.1f}%" if m["pnl_pct"] is not None else "—",
+            "From ATH": f"{m['ath_pct']:.0f}%" if m["ath_pct"] else "—",
+            "30d %":    f"{m['ch30']:+.1f}%" if m["ch30"] else "—",
+            "RSI":      f"{m['rsi']}" if m["rsi"] else "—",
         })
     st.dataframe(pd.DataFrame(rows_a), use_container_width=True, hide_index=True)
 
@@ -916,7 +916,7 @@ with tab0:
 with tab1:
     st.header("💼 Portfolio")
 
-    if fg_value:
+    if fg_value is not None:
         fg_color = "🟢" if fg_value < 25 else "🟡" if fg_value < 50 else "🟠" if fg_value < 75 else "🔴"
         st.info(f"**Market Sentiment:** {fg_color} Fear & Greed = **{fg_value}** ({fg_label})  ·  Rating column shows current Buy/Sell signal for each holding.")
 
@@ -974,7 +974,7 @@ with tab2:
     st.header("🚦 Buy / Sell Signals")
     st.caption("Expand any coin to see the detailed factors behind its rating.")
 
-    if fg_value:
+    if fg_value is not None:
         st.info(f"**Fear & Greed: {fg_value} — {fg_label}** · <25 = buy zone · >75 = sell zone")
 
     # Quick summary table — all key numbers at a glance
@@ -1262,8 +1262,9 @@ with tab5:
         abg  = action_colors.get(sell_act,  "#1a1a1a")
         abdr = action_borders.get(sell_act, "#555")
 
+        sell_summary = "No action" if sell_act == "✅ Hold" else f"Sell {sell_pct}"
         with st.expander(
-            f"**{info['name']} ({info['symbol']})** — {sell_act}  ·  Sell: {sell_pct}",
+            f"{info['name']} ({info['symbol']}) — {sell_act}  ·  {sell_summary}",
             expanded=(sell_sc >= 3)   # auto-expand urgent coins
         ):
             # Action banner
