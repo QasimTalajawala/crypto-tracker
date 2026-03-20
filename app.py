@@ -256,6 +256,8 @@ if "holdings" not in st.session_state:
     st.session_state.holdings = load_holdings()
 if "watchlist" not in st.session_state:
     st.session_state.watchlist = []
+if "rsi_cache" not in st.session_state:
+    st.session_state.rsi_cache = {}
 
 # ── API helpers ──────────────────────────────────────────────────────────────
 def _get_with_retry(url, timeout=10, retries=3):
@@ -687,55 +689,51 @@ _speculative_value = sum(
 )
 _speculative_alloc_pct = (_speculative_value / _total_portfolio * 100) if _total_portfolio else 0
 
-_rsi_placeholder = st.empty()
-with _rsi_placeholder.container():
-    with st.spinner(f"Computing RSI for {len(st.session_state.holdings)} coins…"):
-        coin_metrics = {}
-        for cid, info in st.session_state.holdings.items():
-            md         = market.get(cid, {})
-            cp         = md.get("current_price", 0)
-            ath        = md.get("ath", 0)
-            mcap       = md.get("market_cap", 0)
-            vol        = md.get("total_volume", 0)
-            vol_mcap   = (vol / mcap * 100) if mcap else None
-            ath_pct    = ((cp - ath) / ath * 100) if ath else None
-            ch30       = md.get("price_change_percentage_30d_in_currency")
-            bp         = info["buy_price"]
-            pnl_pct    = ((cp - bp) / bp * 100) if bp > 0 and cp else None
-            rsi        = fetch_rsi(cid)
+coin_metrics = {}
+for cid, info in st.session_state.holdings.items():
+    md         = market.get(cid, {})
+    cp         = md.get("current_price", 0)
+    ath        = md.get("ath", 0)
+    mcap       = md.get("market_cap", 0)
+    vol        = md.get("total_volume", 0)
+    vol_mcap   = (vol / mcap * 100) if mcap else None
+    ath_pct    = ((cp - ath) / ath * 100) if ath else None
+    ch30       = md.get("price_change_percentage_30d_in_currency")
+    bp         = info["buy_price"]
+    pnl_pct    = ((cp - bp) / bp * 100) if bp > 0 and cp else None
+    rsi        = st.session_state.rsi_cache.get(cid)
 
-            # Pull qualitative tier profile (falls back gracefully for unknown coins)
-            tier_info  = FUNDAMENTAL_TIERS.get(cid, {})
-            tier_score = tier_info.get("tier_score", 0)
-            tier_label = tier_info.get("tier_label", "Unrated")
-            tier_reason = (
-                f"{tier_label} — {tier_info['use_case']}"
-                if tier_info else ""
-            )
+    # Pull qualitative tier profile (falls back gracefully for unknown coins)
+    tier_info  = FUNDAMENTAL_TIERS.get(cid, {})
+    tier_score = tier_info.get("tier_score", 0)
+    tier_label = tier_info.get("tier_label", "Unrated")
+    tier_reason = (
+        f"{tier_label} — {tier_info['use_case']}"
+        if tier_info else ""
+    )
 
-            # Per-coin allocation % for portfolio composition signals
-            coin_alloc_pct = (_raw_values.get(cid, 0) / _total_portfolio * 100) if _total_portfolio else 0
+    # Per-coin allocation % for portfolio composition signals
+    coin_alloc_pct = (_raw_values.get(cid, 0) / _total_portfolio * 100) if _total_portfolio else 0
 
-            signal, reasons, score = compute_signal(
-                rsi, fg_value, ath_pct, ch30, pnl_pct, mcap, vol_mcap,
-                tier_score=tier_score, tier_reason=tier_reason,
-                coin_alloc_pct=coin_alloc_pct, speculative_alloc_pct=_speculative_alloc_pct
-            )
-            sell_action, sell_pct, sell_reasons, sell_score = compute_sell_signal(
-                pnl_pct, ath_pct, fg_value, ch30, rsi, tier_score,
-                coin_alloc_pct=coin_alloc_pct
-            )
-            coin_metrics[cid] = dict(
-                info=info, md=md, cp=cp, ath=ath, mcap=mcap,
-                vol_mcap=vol_mcap, ath_pct=ath_pct, ch30=ch30,
-                pnl_pct=pnl_pct, rsi=rsi, signal=signal, reasons=reasons, score=score,
-                value=info["qty"] * cp,
-                tier_info=tier_info, tier_label=tier_label, tier_score=tier_score,
-                sell_action=sell_action, sell_pct=sell_pct,
-                sell_reasons=sell_reasons, sell_score=sell_score,
-                coin_alloc_pct=coin_alloc_pct,
-            )
-_rsi_placeholder.empty()
+    signal, reasons, score = compute_signal(
+        rsi, fg_value, ath_pct, ch30, pnl_pct, mcap, vol_mcap,
+        tier_score=tier_score, tier_reason=tier_reason,
+        coin_alloc_pct=coin_alloc_pct, speculative_alloc_pct=_speculative_alloc_pct
+    )
+    sell_action, sell_pct, sell_reasons, sell_score = compute_sell_signal(
+        pnl_pct, ath_pct, fg_value, ch30, rsi, tier_score,
+        coin_alloc_pct=coin_alloc_pct
+    )
+    coin_metrics[cid] = dict(
+        info=info, md=md, cp=cp, ath=ath, mcap=mcap,
+        vol_mcap=vol_mcap, ath_pct=ath_pct, ch30=ch30,
+        pnl_pct=pnl_pct, rsi=rsi, signal=signal, reasons=reasons, score=score,
+        value=info["qty"] * cp,
+        tier_info=tier_info, tier_label=tier_label, tier_score=tier_score,
+        sell_action=sell_action, sell_pct=sell_pct,
+        sell_reasons=sell_reasons, sell_score=sell_score,
+        coin_alloc_pct=coin_alloc_pct,
+    )
 
 tab0, tab1, tab2, tab3, tab4, tab5 = st.tabs(
     ["🎯 Analysis", "💼 Portfolio", "🚦 Signals", "📊 Fundamentals", "👀 Watchlist", "📤 Exit Strategy"]
@@ -1174,7 +1172,7 @@ with tab4:
             mc       = md.get("market_cap", 0)
             vol      = md.get("total_volume", 0)
             vmp      = (vol / mc * 100) if mc else None
-            rsi      = fetch_rsi(cid)
+            rsi      = st.session_state.rsi_cache.get(cid)
             signal, _, _s = compute_signal(
                 rsi, fg_value, ath_pct,
                 md.get("price_change_percentage_30d_in_currency"), None, mc, vmp
@@ -1338,9 +1336,20 @@ with tab5:
 """)
 
 
+# ── Post-render RSI loading ───────────────────────────────────────────────────
+# RSI is fetched AFTER the page renders so the user sees content immediately.
+# Stored in session_state so subsequent interactions are instant.
+_all_tracked = list(st.session_state.holdings.keys()) + st.session_state.watchlist
+_missing_rsi = [cid for cid in _all_tracked if cid not in st.session_state.rsi_cache]
+if _missing_rsi:
+    with st.spinner(f"📡 Loading RSI for {len(_missing_rsi)} coin(s)… (cached for this session)"):
+        for cid in _missing_rsi:
+            st.session_state.rsi_cache[cid] = fetch_rsi(cid)
+    st.rerun()
+
 st.divider()
 st.caption(
     f"Data: CoinGecko (free) · Alternative.me · "
-    f"Prices refresh every 10 min · RSI every 2 hrs · Fear & Greed every 1 hr · "
+    f"Prices refresh every 10 min · RSI cached per session · Fear & Greed every 1 hr · "
     f"Last loaded: {datetime.now().strftime('%H:%M:%S')}"
 )
