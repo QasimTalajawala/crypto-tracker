@@ -24,18 +24,29 @@ COINGECKO_IDS = list(DEFAULT_HOLDINGS.keys())
 HOLDINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "holdings.json")
 
 # ── Qualitative Fundamental Profiles ─────────────────────────────────────────
-# Tier 1 = Blue Chip (+3):  Proven, institutional-grade, irreplaceable infrastructure
-# Tier 2 = Established (+2): Solid use case, growing ecosystem, meaningful execution risk
-# Tier 3 = Speculative (0):  Genuine innovation but early-stage and unproven at scale
+# 4-tier system — the model assesses each coin's investment merit honestly.
+# A coin can score zero (no fundamental credit) if the thesis is weak.
 #
-# These scores add to the signal score so that strong fundamentals require fewer
-# price signals to reach "Buy", and speculative coins need a deeper dip to qualify.
+# Tier 1 — Institutional Grade  (+3): Irreplaceable, deepest institutional adoption
+# Tier 2 — High Conviction      (+2): Real ecosystem traction, defensible moat
+# Tier 3 — Conditional          (+1): Real use case but meaningful competitive risk
+# Tier 4 — Low Conviction       ( 0): Interesting thesis, unproven at scale — no credit
+#
+# fundamental_verdict: the model's honest, opinionated investment case for each coin.
+# This is what you should read before deciding whether to hold or add a position.
 FUNDAMENTAL_TIERS = {
     "bitcoin": {
         "tier": 1,
-        "tier_label": "Tier 1 — Blue Chip",
+        "tier_label": "Tier 1 — Institutional Grade",
         "tier_score": 3,
         "use_case": "Digital gold / store of value / hardest money ever created",
+        "fundamental_verdict": (
+            "Core holding — always accumulate. "
+            "Irreplaceable store of value: hard-capped 21M supply, 15+ year unbroken track record, "
+            "and accelerating institutional adoption via spot ETFs (BlackRock, Fidelity). "
+            "No credible competitor for the 'digital gold' thesis. "
+            "Never sell your entire position — size up on every major dip."
+        ),
         "strengths": [
             "Hard-capped 21M supply — mathematically scarce",
             "15+ year unbroken track record — no hacks, no downtime",
@@ -52,9 +63,16 @@ FUNDAMENTAL_TIERS = {
     },
     "ethereum": {
         "tier": 1,
-        "tier_label": "Tier 1 — Blue Chip",
+        "tier_label": "Tier 1 — Institutional Grade",
         "tier_score": 3,
         "use_case": "Smart contract platform — backbone of DeFi, NFTs, and Web3",
+        "fundamental_verdict": (
+            "Core holding — always accumulate. "
+            "The smart contract standard with no credible challenger at scale: "
+            "deepest DeFi TVL, most active developers, spot ETF approved, deflationary EIP-1559 mechanics. "
+            "L2 fragmentation is a real risk but ETH remains the settlement layer. "
+            "Size up on every significant dip."
+        ),
         "strengths": [
             "Largest DeFi ecosystem ($40B+ TVL — Aave, Uniswap, Lido)",
             "Proof of Stake since 2022 — 99.95% energy reduction",
@@ -69,30 +87,18 @@ FUNDAMENTAL_TIERS = {
             "Complex upgrades carry execution risk",
         ],
     },
-    "binancecoin": {
-        "tier": 2,
-        "tier_label": "Tier 2 — Established",
-        "tier_score": 2,
-        "use_case": "Exchange utility token powering BNB Chain (BSC) ecosystem",
-        "strengths": [
-            "Quarterly token burns reduce supply systematically",
-            "Backed by Binance — world's largest crypto exchange by volume",
-            "BNB Chain hosts active DeFi/GameFi ecosystem",
-            "Low transaction fees on BSC make it accessible for retail",
-            "Used for trading fee discounts, Launchpad access",
-        ],
-        "risks": [
-            "Highly centralised — Binance controls large token supply",
-            "Regulatory risk directly tied to Binance's legal standing",
-            "SEC has named BNB as unregistered security in lawsuits",
-            "BSC often criticised as centralised copy of Ethereum",
-        ],
-    },
     "solana": {
         "tier": 2,
-        "tier_label": "Tier 2 — Established",
+        "tier_label": "Tier 2 — High Conviction",
         "tier_score": 2,
         "use_case": "High-performance Layer-1 blockchain for DeFi, NFTs, and payments",
+        "fundamental_verdict": (
+            "High conviction — accumulate on dips. "
+            "The strongest L1 challenger to Ethereum: fastest throughput, best retail UX (<$0.001 fees), "
+            "and real DEX volume rivalling Ethereum. Firedancer upgrade improves decentralisation further. "
+            "The FTX collapse overhang has largely cleared. "
+            "Execution risk remains (past outages), but the ecosystem is real and growing fast."
+        ),
         "strengths": [
             "65,000+ TPS throughput with sub-second finality",
             "Transaction fees typically <$0.001 — best UX for retail",
@@ -110,9 +116,16 @@ FUNDAMENTAL_TIERS = {
     },
     "chainlink": {
         "tier": 2,
-        "tier_label": "Tier 2 — Established",
+        "tier_label": "Tier 2 — High Conviction",
         "tier_score": 2,
         "use_case": "Decentralised oracle network — connects blockchains to real-world data",
+        "fundamental_verdict": (
+            "High conviction — often overlooked, genuinely essential. "
+            "~70% oracle market share; every major DeFi protocol (Aave, Compound, Synthetix) depends on LINK. "
+            "CCIP is expanding into cross-chain interoperability — a new growth vector. "
+            "Token has historically underperformed in bull runs but the infrastructure moat is deep. "
+            "Accumulate; the network's value grows with every new DeFi protocol that launches."
+        ),
         "strengths": [
             "~70% market share in DeFi oracles — Aave, Compound, Synthetix rely on it",
             "Google Cloud and Swift official partnerships",
@@ -127,31 +140,45 @@ FUNDAMENTAL_TIERS = {
             "Oracle manipulation remains an industry-wide risk",
         ],
     },
-    "bittensor": {
+    "binancecoin": {
         "tier": 3,
-        "tier_label": "Tier 3 — Speculative / High Potential",
+        "tier_label": "Tier 3 — Conditional Conviction",
         "tier_score": 1,
-        "use_case": "Decentralised AI/ML network — miners compete by training machine learning models",
+        "use_case": "Exchange utility token powering BNB Chain (BSC) ecosystem",
+        "fundamental_verdict": (
+            "Conditional hold — real ecosystem, but thesis depends on Binance's survival. "
+            "BNB's value is inseparable from Binance's health: if Binance faces existential regulatory action "
+            "(ongoing SEC lawsuit, global restrictions), BNB's price would collapse regardless of on-chain activity. "
+            "The BSC ecosystem is active but largely a centralised replica of Ethereum. "
+            "Hold if you already own it, but do not size up aggressively — the regulatory overhang is real."
+        ),
         "strengths": [
-            "Unique model: mining = training AI models — aligns crypto incentives with AI",
-            "Hard-capped 21M TAO supply (same as BTC) — genuine scarcity",
-            "60+ active subnets covering text, image, finance, speech AI",
-            "Strong mindshare at intersection of AI and crypto",
-            "First-mover in decentralised AI incentive layer",
+            "Quarterly token burns reduce supply systematically",
+            "Backed by Binance — world's largest crypto exchange by volume",
+            "BNB Chain hosts active DeFi/GameFi ecosystem",
+            "Low transaction fees on BSC make it accessible for retail",
+            "Used for trading fee discounts, Launchpad access",
         ],
         "risks": [
-            "Early stage — subnet quality and output varies widely",
-            "Highly volatile — prone to sharp 50-70% drawdowns",
-            "Complex tokenomics still evolving",
-            "Dependent on continued AI narrative momentum",
-            "Small ecosystem relative to valuation",
+            "Highly centralised — Binance controls large token supply",
+            "Regulatory risk directly tied to Binance's legal standing",
+            "SEC has named BNB as unregistered security in lawsuits",
+            "BSC often criticised as centralised copy of Ethereum",
         ],
     },
     "render-token": {
         "tier": 3,
-        "tier_label": "Tier 3 — Speculative / High Potential",
+        "tier_label": "Tier 3 — Conditional Conviction",
         "tier_score": 1,
         "use_case": "Decentralised GPU marketplace — connecting idle GPUs to 3D rendering and AI compute jobs",
+        "fundamental_verdict": (
+            "Moderate conviction — real product, but size conservatively. "
+            "RENDER has genuine revenue: OctaneRender is used by real studios and creators, "
+            "and the AI/GPU compute boom directly benefits the network. "
+            "However, AWS, Google Cloud, and CoreWeave are competing for the same market with far more capital. "
+            "The token must prove it captures value better than centralised alternatives at scale. "
+            "Accumulate on deep dips; do not overweight — keep position small relative to core holdings."
+        ),
         "strengths": [
             "Real, tangible use case — creators pay GPU providers for rendering",
             "OctaneRender (industry-leading 3D tool) integration",
@@ -165,6 +192,35 @@ FUNDAMENTAL_TIERS = {
             "Token economics still evolving post-Solana migration",
             "Relatively small core team",
             "Revenue model not yet fully proven at scale",
+        ],
+    },
+    "bittensor": {
+        "tier": 4,
+        "tier_label": "Tier 4 — Low Conviction",
+        "tier_score": 0,
+        "use_case": "Decentralised AI/ML network — miners compete by training machine learning models",
+        "fundamental_verdict": (
+            "Low conviction — fascinating thesis, but thesis requires decentralised AI to win. "
+            "The problem: OpenAI, Google, and Anthropic are winning the AI race by a wide margin, "
+            "and centralised AI has structural advantages (unified training, massive capital, speed). "
+            "TAO subnets produce outputs that are orders of magnitude behind frontier models. "
+            "The 21M supply cap and first-mover narrative drive speculation, but speculation is not a thesis. "
+            "Only hold a small position if you have genuine, researched conviction in decentralised AI long-term. "
+            "Consider trimming if the AI decentralisation narrative weakens — exit thesis is unclear."
+        ),
+        "strengths": [
+            "Unique model: mining = training AI models — aligns crypto incentives with AI",
+            "Hard-capped 21M TAO supply (same as BTC) — genuine scarcity",
+            "60+ active subnets covering text, image, finance, speech AI",
+            "Strong mindshare at intersection of AI and crypto",
+            "First-mover in decentralised AI incentive layer",
+        ],
+        "risks": [
+            "Centralised AI (OpenAI, Google, Anthropic) is winning by a wide margin",
+            "Subnet output quality far below frontier AI models",
+            "Complex tokenomics still evolving — subnet economics not fully proven",
+            "Highly volatile — prone to sharp 50-70% drawdowns",
+            "Small ecosystem relative to valuation; dependent on continued AI narrative",
         ],
     },
 }
@@ -339,12 +395,14 @@ def compute_signal(rsi, fg_value, price_vs_ath_pct, price_change_30d, pnl_pct,
       Vol/MCap     ≥ 5%  = +1  |  <  1%  = -1
 
     QUALITATIVE FUNDAMENTALS (via FUNDAMENTAL_TIERS)
-      Tier 1 (Blue Chip)             = +3   e.g. BTC, ETH  — proven, institutional-grade
-      Tier 2 (Established)           = +2   e.g. BNB, SOL, LINK — strong but less mature
-      Tier 3 (Speculative/Potential) = +1   e.g. TAO, RENDER — real use case, higher risk
+      Tier 1 (Institutional Grade)  = +3   BTC, ETH  — irreplaceable, deepest institutional adoption
+      Tier 2 (High Conviction)      = +2   SOL, LINK — real ecosystem traction, defensible moat
+      Tier 3 (Conditional)          = +1   BNB, RENDER — real use case, meaningful competitive risk
+      Tier 4 (Low Conviction)       =  0   TAO — interesting thesis, unproven vs centralised competitors
 
-    All coins receive qualitative fundamental credit reflecting their long-term thesis.
-    Tier difference ensures blue chips still outrank speculative in equal market conditions.
+    Tier 4 coins receive no fundamental credit. They must earn a Buy entirely through
+    price signals (cheap vs ATH, low fear, oversold RSI). This is intentional: the model
+    is not convinced the investment thesis is strong enough to reward buying in neutral markets.
 
     PORTFOLIO COMPOSITION
       Single-coin weight  > 30% of portfolio = -1  (concentrated position, adds risk)
@@ -399,7 +457,9 @@ def compute_signal(rsi, fg_value, price_vs_ath_pct, price_change_30d, pnl_pct,
         elif vol_mcap_pct < 1:  score -= 1; fund_reasons.append(f"Vol/MCap {vol_mcap_pct:.1f}% — low liquidity")
 
     # ── Qualitative fundamentals (tier) ───────────────────────────────────────
-    if tier_score != 0 and tier_reason:
+    # Always append reason so the verdict is visible in Signals tab even for Tier 4.
+    # score += 0 is a no-op for Tier 4 coins (tier_score == 0).
+    if tier_reason:
         score += tier_score
         fund_reasons.append(tier_reason)
 
@@ -879,15 +939,16 @@ with tab3:
         st.markdown("""
 | Metric | Good sign | Red flag |
 |---|---|---|
-| **Qual. Tier** | Tier 1 = Blue Chip (proven, institutional) | Tier 3 = Speculative (early-stage) |
+| **Qual. Tier** | Tier 1–2 = strong thesis, accumulate | Tier 4 = weak thesis, be selective |
 | **Market Cap** | >$10B (large cap = stable) | <$100M (micro cap = risky) |
 | **Vol/MCap %** | >3% (active, liquid) | <0.5% (illiquid, hard to exit) |
 | **From ATH** | −50% to −80% (historically cheap) | Near 0% (near peak) |
 | **7d / 30d %** | Moderate positive | Extreme >50% (FOMO) or deep negative |
 | **RSI** | 30–50 (healthy zone) | <20 or >80 (extremes) |
 
-**Qual. Tier scoring in signal:** Tier 1 = +3 pts · Tier 2 = +2 pts · Tier 3 = 0 pts
-Calibrated for a weeks-to-months holding style: blue chips (BTC, ETH) rate Buy/Strong Buy even in neutral markets — you should always be accumulating quality assets. Speculative coins (TAO, RENDER) need a genuine price dip to trigger Buy. At bull tops: blue chips → Caution (pause buying); speculative coins → Consider Selling (trim positions).
+**Investment tier scoring:** Tier 1 = +3 pts · Tier 2 = +2 pts · Tier 3 = +1 pt · Tier 4 = 0 pts
+
+The model assesses each coin's investment merit — Tier 4 coins receive **no fundamental credit** and must earn a Buy purely through price signals. Read each coin's **Investment Verdict** below for the model's honest opinion on whether the coin merits a position at all.
 """)
 
     def mcap_label(mc):
@@ -923,11 +984,13 @@ Calibrated for a weeks-to-months holding style: blue chips (BTC, ETH) rate Buy/S
     st.divider()
 
     # ── Qualitative Coin Profiles ──────────────────────────────────────────
-    st.subheader("🏛️ Coin Profiles — What You're Investing In")
-    st.caption("Expand each coin to see its use case, competitive strengths, and key risks. This is the qualitative layer behind the signal score.")
+    st.subheader("🏛️ Coin Profiles — Model's Investment Assessment")
+    st.caption("Expand each coin to see the model's investment verdict, use case, strengths, and risks. The verdict is the model's honest opinion — read it before deciding whether to add to a position.")
 
-    tier_colors = {"Tier 1": "#1a3a1a", "Tier 2": "#1a2a3a", "Tier 3": "#2e2a1a"}
-    tier_badges = {"Tier 1": "🟢", "Tier 2": "🔵", "Tier 3": "🟡"}
+    tier_colors  = {"Tier 1": "#1a3a1a", "Tier 2": "#1a2a3a", "Tier 3": "#2e2a1a", "Tier 4": "#3a1a1a"}
+    tier_badges  = {"Tier 1": "🟢", "Tier 2": "🔵", "Tier 3": "🟡", "Tier 4": "🔴"}
+    verdict_colors = {"Tier 1": "#1a3a1a", "Tier 2": "#1a2a3a", "Tier 3": "#2e2316", "Tier 4": "#3a1a1a"}
+    verdict_borders = {"Tier 1": "#2d7a2d", "Tier 2": "#2d5fa0", "Tier 3": "#a07a2d", "Tier 4": "#a03030"}
 
     for cid, m in coin_metrics.items():
         tf = m["tier_info"]
@@ -942,6 +1005,20 @@ Calibrated for a weeks-to-months holding style: blue chips (BTC, ETH) rate Buy/S
             f"{badge} **{info['name']} ({info['symbol']})** — {tf['tier_label']}",
             expanded=False
         ):
+            # Investment verdict — the model's honest opinion
+            vbg  = verdict_colors.get(tier_key, "#1a1a1a")
+            vbdr = verdict_borders.get(tier_key, "#555")
+            verdict_text = tf.get("fundamental_verdict", "No assessment available for this coin.")
+            st.markdown(
+                f"<div style='background:{vbg};border-left:4px solid {vbdr};"
+                f"border-radius:0 8px 8px 0;padding:12px 16px;margin-bottom:12px'>"
+                f"<div style='font-size:0.75rem;color:#aaa;margin-bottom:4px;letter-spacing:0.05em'>MODEL VERDICT</div>"
+                f"<div style='font-size:0.92rem;line-height:1.5'>{verdict_text}</div>"
+                f"</div>",
+                unsafe_allow_html=True
+            )
+
+            # Use case
             st.markdown(
                 f"<div style='background:{bg_color};border-radius:8px;padding:10px 16px;margin-bottom:10px'>"
                 f"<b>Use case:</b> {tf['use_case']}</div>",
@@ -958,10 +1035,9 @@ Calibrated for a weeks-to-months holding style: blue chips (BTC, ETH) rate Buy/S
                 for r in tf["risks"]:
                     st.markdown(f"- {r}")
 
-            st.caption(
-                f"Signal contribution: **{tf['tier_label']}** adds "
-                f"**{'+' if tf['tier_score'] > 0 else ''}{tf['tier_score']} pts** to this coin's overall score."
-            )
+            score_str = f"+{tf['tier_score']}" if tf['tier_score'] > 0 else str(tf['tier_score'])
+            note = "no fundamental credit added — must earn Buy on price signals alone" if tf['tier_score'] == 0 else f"adds {score_str} pts to this coin's signal score"
+            st.caption(f"Signal contribution: **{tf['tier_label']}** — {note}.")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 4: WATCHLIST
