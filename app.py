@@ -262,7 +262,7 @@ def _get_with_retry(url, timeout=10, retries=3):
     for attempt in range(retries):
         r = requests.get(url, timeout=timeout)
         if r.status_code == 429:
-            time.sleep(2 ** attempt)
+            time.sleep(1 + attempt)   # 1s, 2s, 3s — gentler than exponential
             continue
         r.raise_for_status()
         return r
@@ -284,13 +284,14 @@ def fetch_market_data(coin_ids: tuple):
     except Exception:
         return None
 
-@st.cache_data(ttl=7200)
-def fetch_rsi(coin_id: str, days: int = 100):
+@st.cache_data(ttl=86400, show_spinner=False)
+def fetch_rsi(coin_id: str, days: int = 60):
     """
     Fetch daily closes and compute RSI using Wilder's true smoothing method:
       1. Seed: simple mean of first 14 up-moves / down-moves
       2. Smoothing: avg = (prev_avg * 13 + current) / 14  (Wilder's EMA)
-    100 days gives ~86 stable RSI readings after the 14-period seed.
+    60 days gives ~46 stable RSI readings — plenty for a reliable value.
+    Cache TTL is 24h: RSI changes slowly and this app is for weeks-to-months decisions.
     """
     url = (
         f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"
@@ -559,13 +560,19 @@ with st.sidebar:
 
 # ── Fetch data ────────────────────────────────────────────────────────────────
 all_ids = tuple(list(st.session_state.holdings.keys()) + st.session_state.watchlist)
-market_result = fetch_market_data(all_ids)
+
+_loading_placeholder = st.empty()
+with _loading_placeholder.container():
+    with st.spinner("Loading market data…"):
+        market_result = fetch_market_data(all_ids)
+        fg_value, fg_label = fetch_fear_greed()
+_loading_placeholder.empty()
+
 if market_result is not None:
     st.session_state["last_market"] = market_result
 market = st.session_state.get("last_market", {})
 if market_result is None:
     st.warning("⚠️ CoinGecko rate limit — showing last known prices. Refreshes in ~10 min.", icon="⏳")
-fg_value, fg_label = fetch_fear_greed()
 
 # ── Sell signal thresholds (by tier_score) ───────────────────────────────────
 # (trim_25, trim_50, major_profits, full_exit)
@@ -674,51 +681,55 @@ _speculative_value = sum(
 )
 _speculative_alloc_pct = (_speculative_value / _total_portfolio * 100) if _total_portfolio else 0
 
-coin_metrics = {}
-for cid, info in st.session_state.holdings.items():
-    md         = market.get(cid, {})
-    cp         = md.get("current_price", 0)
-    ath        = md.get("ath", 0)
-    mcap       = md.get("market_cap", 0)
-    vol        = md.get("total_volume", 0)
-    vol_mcap   = (vol / mcap * 100) if mcap else None
-    ath_pct    = ((cp - ath) / ath * 100) if ath else None
-    ch30       = md.get("price_change_percentage_30d_in_currency")
-    bp         = info["buy_price"]
-    pnl_pct    = ((cp - bp) / bp * 100) if bp > 0 and cp else None
-    rsi        = fetch_rsi(cid)
+_rsi_placeholder = st.empty()
+with _rsi_placeholder.container():
+    with st.spinner(f"Computing RSI for {len(st.session_state.holdings)} coins…"):
+        coin_metrics = {}
+        for cid, info in st.session_state.holdings.items():
+            md         = market.get(cid, {})
+            cp         = md.get("current_price", 0)
+            ath        = md.get("ath", 0)
+            mcap       = md.get("market_cap", 0)
+            vol        = md.get("total_volume", 0)
+            vol_mcap   = (vol / mcap * 100) if mcap else None
+            ath_pct    = ((cp - ath) / ath * 100) if ath else None
+            ch30       = md.get("price_change_percentage_30d_in_currency")
+            bp         = info["buy_price"]
+            pnl_pct    = ((cp - bp) / bp * 100) if bp > 0 and cp else None
+            rsi        = fetch_rsi(cid)
 
-    # Pull qualitative tier profile (falls back gracefully for unknown coins)
-    tier_info  = FUNDAMENTAL_TIERS.get(cid, {})
-    tier_score = tier_info.get("tier_score", 0)
-    tier_label = tier_info.get("tier_label", "Unrated")
-    tier_reason = (
-        f"{tier_label} — {tier_info['use_case']}"
-        if tier_info else ""
-    )
+            # Pull qualitative tier profile (falls back gracefully for unknown coins)
+            tier_info  = FUNDAMENTAL_TIERS.get(cid, {})
+            tier_score = tier_info.get("tier_score", 0)
+            tier_label = tier_info.get("tier_label", "Unrated")
+            tier_reason = (
+                f"{tier_label} — {tier_info['use_case']}"
+                if tier_info else ""
+            )
 
-    # Per-coin allocation % for portfolio composition signals
-    coin_alloc_pct = (_raw_values.get(cid, 0) / _total_portfolio * 100) if _total_portfolio else 0
+            # Per-coin allocation % for portfolio composition signals
+            coin_alloc_pct = (_raw_values.get(cid, 0) / _total_portfolio * 100) if _total_portfolio else 0
 
-    signal, reasons, score = compute_signal(
-        rsi, fg_value, ath_pct, ch30, pnl_pct, mcap, vol_mcap,
-        tier_score=tier_score, tier_reason=tier_reason,
-        coin_alloc_pct=coin_alloc_pct, speculative_alloc_pct=_speculative_alloc_pct
-    )
-    sell_action, sell_pct, sell_reasons, sell_score = compute_sell_signal(
-        pnl_pct, ath_pct, fg_value, ch30, rsi, tier_score,
-        coin_alloc_pct=coin_alloc_pct
-    )
-    coin_metrics[cid] = dict(
-        info=info, md=md, cp=cp, ath=ath, mcap=mcap,
-        vol_mcap=vol_mcap, ath_pct=ath_pct, ch30=ch30,
-        pnl_pct=pnl_pct, rsi=rsi, signal=signal, reasons=reasons, score=score,
-        value=info["qty"] * cp,
-        tier_info=tier_info, tier_label=tier_label, tier_score=tier_score,
-        sell_action=sell_action, sell_pct=sell_pct,
-        sell_reasons=sell_reasons, sell_score=sell_score,
-        coin_alloc_pct=coin_alloc_pct,
-    )
+            signal, reasons, score = compute_signal(
+                rsi, fg_value, ath_pct, ch30, pnl_pct, mcap, vol_mcap,
+                tier_score=tier_score, tier_reason=tier_reason,
+                coin_alloc_pct=coin_alloc_pct, speculative_alloc_pct=_speculative_alloc_pct
+            )
+            sell_action, sell_pct, sell_reasons, sell_score = compute_sell_signal(
+                pnl_pct, ath_pct, fg_value, ch30, rsi, tier_score,
+                coin_alloc_pct=coin_alloc_pct
+            )
+            coin_metrics[cid] = dict(
+                info=info, md=md, cp=cp, ath=ath, mcap=mcap,
+                vol_mcap=vol_mcap, ath_pct=ath_pct, ch30=ch30,
+                pnl_pct=pnl_pct, rsi=rsi, signal=signal, reasons=reasons, score=score,
+                value=info["qty"] * cp,
+                tier_info=tier_info, tier_label=tier_label, tier_score=tier_score,
+                sell_action=sell_action, sell_pct=sell_pct,
+                sell_reasons=sell_reasons, sell_score=sell_score,
+                coin_alloc_pct=coin_alloc_pct,
+            )
+_rsi_placeholder.empty()
 
 tab0, tab1, tab2, tab3, tab4, tab5 = st.tabs(
     ["🎯 Analysis", "💼 Portfolio", "🚦 Signals", "📊 Fundamentals", "👀 Watchlist", "📤 Exit Strategy"]
