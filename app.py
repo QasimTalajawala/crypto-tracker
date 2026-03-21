@@ -18,8 +18,8 @@ except Exception:
 _CG_HEADERS = {"x-cg-demo-api-key": _CG_KEY} if _CG_KEY else {}
 
 # ── CoinCap fallback — no key needed, separate IP rate-limit bucket ───────────
-# Hardcoded ATH (USD) — CoinCap doesn't provide ATH, so we store the known peaks.
-# Update these manually only when a new all-time high is set for any coin.
+# Hardcoded ATH (USD) — CryptoCompare doesn't provide ATH, so we store known peaks.
+# Update manually only when a coin sets a new all-time high.
 _HARDCODED_ATH = {
     "bitcoin":      108786,
     "ethereum":     4878,
@@ -29,15 +29,15 @@ _HARDCODED_ATH = {
     "render-token": 13.60,
     "bittensor":    763,
 }
-# Map CoinGecko IDs → CoinCap asset IDs
-_COINCAP_IDS = {
-    "bitcoin":      "bitcoin",
-    "ethereum":     "ethereum",
-    "solana":       "solana",
-    "chainlink":    "chainlink",
-    "binancecoin":  "binance-coin",
-    "render-token": "render-token",
-    "bittensor":    "bittensor",
+# Map CoinGecko IDs → CryptoCompare ticker symbols
+_CC_SYMBOLS = {
+    "bitcoin":      "BTC",
+    "ethereum":     "ETH",
+    "solana":       "SOL",
+    "chainlink":    "LINK",
+    "binancecoin":  "BNB",
+    "render-token": "RENDER",
+    "bittensor":    "TAO",
 }
 
 # ── Default Holdings ────────────────────────────────────────────────────────
@@ -331,24 +331,26 @@ def fetch_market_data(coin_ids: tuple):
     except Exception:
         pass
 
-    # ── Attempt 2: CoinCap (no auth, different rate-limit pool) ─────────────
+    # ── Attempt 2: CryptoCompare (free, no auth, different rate-limit pool) ────
     try:
-        cap_ids = ",".join(_COINCAP_IDS.get(c, c) for c in coin_ids)
-        cap_url = f"https://api.coincap.io/v2/assets?ids={cap_ids}"
-        r2 = requests.get(cap_url, timeout=8)
+        syms = ",".join(_CC_SYMBOLS[c] for c in coin_ids if c in _CC_SYMBOLS)
+        cc_url = (
+            f"https://min-api.cryptocompare.com/data/pricemultifull"
+            f"?fsyms={syms}&tsyms=USD"
+        )
+        r2 = requests.get(cc_url, timeout=8)
         if r2.status_code == 200:
+            raw = r2.json().get("RAW", {})
             result = {}
-            for asset in r2.json().get("data", []):
-                # Reverse-map CoinCap ID → CoinGecko ID
-                cg_id = next(
-                    (k for k, v in _COINCAP_IDS.items() if v == asset["id"]),
-                    asset["id"]
-                )
+            for cg_id, sym in _CC_SYMBOLS.items():
+                if cg_id not in coin_ids or sym not in raw:
+                    continue
+                usd = raw[sym].get("USD", {})
                 try:
-                    price  = float(asset.get("priceUsd") or 0)
-                    mcap   = float(asset.get("marketCapUsd") or 0)
-                    vol24  = float(asset.get("volumeUsd24Hr") or 0)
-                    ch24   = float(asset.get("changePercent24Hr") or 0)
+                    price = float(usd.get("PRICE") or 0)
+                    mcap  = float(usd.get("MKTCAP") or 0)
+                    vol24 = float(usd.get("VOLUME24HOURTO") or 0)
+                    ch24  = float(usd.get("CHANGEPCT24HOUR") or 0)
                 except (TypeError, ValueError):
                     price = mcap = vol24 = ch24 = 0
                 result[cg_id] = {
