@@ -10,14 +10,35 @@ from datetime import datetime
 
 st.set_page_config(page_title="Crypto Tracker", page_icon="📈", layout="wide")
 
-# ── Optional CoinGecko Demo API key (free at coingecko.com/api) ──────────────
-# Without a key, Streamlit Cloud's shared IPs are frequently rate-limited.
-# Set COINGECKO_API_KEY in Streamlit Cloud → App Settings → Secrets to fix this.
+# ── Optional CoinGecko Demo API key ──────────────────────────────────────────
 try:
     _CG_KEY = st.secrets.get("COINGECKO_API_KEY", "")
 except Exception:
     _CG_KEY = ""
 _CG_HEADERS = {"x-cg-demo-api-key": _CG_KEY} if _CG_KEY else {}
+
+# ── CoinCap fallback — no key needed, separate IP rate-limit bucket ───────────
+# Hardcoded ATH (USD) — CoinCap doesn't provide ATH, so we store the known peaks.
+# Update these manually only when a new all-time high is set for any coin.
+_HARDCODED_ATH = {
+    "bitcoin":      108786,
+    "ethereum":     4878,
+    "solana":       293,
+    "chainlink":    52.88,
+    "binancecoin":  793,
+    "render-token": 13.60,
+    "bittensor":    763,
+}
+# Map CoinGecko IDs → CoinCap asset IDs
+_COINCAP_IDS = {
+    "bitcoin":      "bitcoin",
+    "ethereum":     "ethereum",
+    "solana":       "solana",
+    "chainlink":    "chainlink",
+    "binancecoin":  "binance-coin",
+    "render-token": "render-token",
+    "bittensor":    "bittensor",
+}
 
 # ── Default Holdings ────────────────────────────────────────────────────────
 DEFAULT_HOLDINGS = {
@@ -289,23 +310,62 @@ def _get_with_retry(url, timeout=10, retries=3):
     return r
 
 def fetch_market_data(coin_ids: tuple):
-    # No @st.cache_data — session_state manages the TTL so failed
-    # (rate-limited) calls are never cached and always retried on next trigger.
-    # _CG_HEADERS carries the Demo API key if the user has set it in Streamlit secrets.
+    """
+    Fetch market data — CoinGecko first, CoinCap as automatic fallback.
+    No API key required for either source. No @st.cache_data — session_state
+    manages TTL so rate-limited (None) responses are never cached.
+    """
     ids_str = ",".join(coin_ids)
-    url = (
+
+    # ── Attempt 1: CoinGecko ─────────────────────────────────────────────────
+    cg_url = (
         "https://api.coingecko.com/api/v3/coins/markets"
         f"?vs_currency=usd&ids={ids_str}"
         "&order=market_cap_desc&per_page=50&page=1"
         "&price_change_percentage=7d,30d&sparkline=false"
     )
     try:
-        r = requests.get(url, timeout=8, headers=_CG_HEADERS)
-        if r.status_code != 200:
-            return None
-        return {c["id"]: c for c in r.json()}
+        r = requests.get(cg_url, timeout=8, headers=_CG_HEADERS)
+        if r.status_code == 200:
+            return {c["id"]: c for c in r.json()}
     except Exception:
-        return None
+        pass
+
+    # ── Attempt 2: CoinCap (no auth, different rate-limit pool) ─────────────
+    try:
+        cap_ids = ",".join(_COINCAP_IDS.get(c, c) for c in coin_ids)
+        cap_url = f"https://api.coincap.io/v2/assets?ids={cap_ids}"
+        r2 = requests.get(cap_url, timeout=8)
+        if r2.status_code == 200:
+            result = {}
+            for asset in r2.json().get("data", []):
+                # Reverse-map CoinCap ID → CoinGecko ID
+                cg_id = next(
+                    (k for k, v in _COINCAP_IDS.items() if v == asset["id"]),
+                    asset["id"]
+                )
+                try:
+                    price  = float(asset.get("priceUsd") or 0)
+                    mcap   = float(asset.get("marketCapUsd") or 0)
+                    vol24  = float(asset.get("volumeUsd24Hr") or 0)
+                    ch24   = float(asset.get("changePercent24Hr") or 0)
+                except (TypeError, ValueError):
+                    price = mcap = vol24 = ch24 = 0
+                result[cg_id] = {
+                    "current_price":                          price,
+                    "market_cap":                             mcap,
+                    "total_volume":                           vol24,
+                    "price_change_percentage_24h":            ch24,
+                    "ath":                                    _HARDCODED_ATH.get(cg_id, 0),
+                    "price_change_percentage_7d_in_currency": None,
+                    "price_change_percentage_30d_in_currency": None,
+                }
+            if result:
+                return result
+    except Exception:
+        pass
+
+    return None
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_rsi(coin_id: str, days: int = 60):
@@ -1371,8 +1431,7 @@ if _market_stale:
         st.session_state.last_market = _mr
         _need_rerun = True                        # only rerun when we actually got fresh data
     elif not _have_market:
-        _key_hint = "" if _CG_KEY else " Add a free CoinGecko Demo API key in Streamlit → Settings → Secrets (`COINGECKO_API_KEY`) to fix this."
-        st.warning(f"⚠️ Could not load price data (CoinGecko rate limit).{_key_hint} Retrying in ~60s…", icon="⏳")
+        st.warning("⚠️ Both price sources temporarily unavailable. Retrying in ~60s…", icon="⏳")
 
 # Fear & Greed — refresh every 1 hr
 _fg_stale = (st.session_state.last_fg[0] is None or
