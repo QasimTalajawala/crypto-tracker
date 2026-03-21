@@ -1336,36 +1336,45 @@ with tab5:
 """)
 
 
-# ── Post-render RSI loading ───────────────────────────────────────────────────
 # ── Post-render data fetch ────────────────────────────────────────────────────
 # All API calls happen AFTER the page renders so the user always sees content
-# immediately. Session state acts as the display cache; @st.cache_data prevents
-# duplicate HTTP requests across reruns and users.
+# immediately. Session state is the display cache; @st.cache_data prevents
+# duplicate HTTP requests across reruns.
+#
+# CRITICAL: always update fetch timestamps regardless of success/failure.
+# If we only update on success, a rate-limited (None) response leaves the
+# timestamp at 0 → condition always true → infinite rerun loop.
 _now = time.time()
 _need_rerun = False
 
 # Market prices — refresh every 10 min
-if not st.session_state.last_market or (_now - st.session_state.market_fetched_at) >= 600:
+_market_stale = (not st.session_state.last_market or
+                 (_now - st.session_state.market_fetched_at) >= 600)
+if _market_stale:
     _all_ids = tuple(list(st.session_state.holdings.keys()) + st.session_state.watchlist)
     with st.spinner("📡 Loading market prices…"):
         _mr = fetch_market_data(_all_ids)
+    st.session_state.market_fetched_at = _now   # always update — breaks infinite-retry loop
     if _mr:
         st.session_state.last_market = _mr
-        st.session_state.market_fetched_at = _now
-    _need_rerun = True
+        _need_rerun = True                        # only rerun when we actually got fresh data
+    elif not st.session_state.last_market:
+        st.warning("⚠️ Could not load price data (CoinGecko rate limit). Will retry in 10 min.", icon="⏳")
 
 # Fear & Greed — refresh every 1 hr
-if st.session_state.last_fg[0] is None or (_now - st.session_state.fg_fetched_at) >= 3600:
+_fg_stale = (st.session_state.last_fg[0] is None or
+             (_now - st.session_state.fg_fetched_at) >= 3600)
+if _fg_stale:
     _fgv, _fgl = fetch_fear_greed()
+    st.session_state.fg_fetched_at = _now        # always update — breaks infinite-retry loop
     if _fgv is not None:
         st.session_state.last_fg = (_fgv, _fgl)
-        st.session_state.fg_fetched_at = _now
-    if not _need_rerun:
-        _need_rerun = True
+        if not _need_rerun:
+            _need_rerun = True
 
-# RSI — per-coin, per-session (skip if already rererunning to avoid double rerun)
+# RSI — per-coin, per-session
 _all_tracked = list(st.session_state.holdings.keys()) + st.session_state.watchlist
-_missing_rsi = [cid for cid in _all_tracked if cid not in st.session_state.rsi_cache]
+_missing_rsi  = [cid for cid in _all_tracked if cid not in st.session_state.rsi_cache]
 if _missing_rsi and not _need_rerun:
     with st.spinner(f"📡 Loading RSI for {len(_missing_rsi)} coin(s)…"):
         for cid in _missing_rsi:
