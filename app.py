@@ -279,8 +279,9 @@ def _get_with_retry(url, timeout=10, retries=3):
     r.raise_for_status()
     return r
 
-@st.cache_data(ttl=600)
 def fetch_market_data(coin_ids: tuple):
+    # No @st.cache_data here — session_state manages the TTL so failed
+    # (rate-limited) calls are never cached and always retried on next trigger.
     ids_str = ",".join(coin_ids)
     url = (
         "https://api.coingecko.com/api/v3/coins/markets"
@@ -345,8 +346,8 @@ def fetch_rsi(coin_id: str, days: int = 60):
     except Exception:
         return None
 
-@st.cache_data(ttl=3600)
 def fetch_fear_greed():
+    # No @st.cache_data — session_state manages the TTL (1 hr).
     try:
         r = requests.get("https://api.alternative.me/fng/?limit=1", timeout=4)
         d = r.json()["data"][0]
@@ -1347,9 +1348,10 @@ with tab5:
 _now = time.time()
 _need_rerun = False
 
-# Market prices — refresh every 10 min
-_market_stale = (not st.session_state.last_market or
-                 (_now - st.session_state.market_fetched_at) >= 600)
+# Market prices — refresh every 10 min when data exists, retry every 60s on failure
+_have_market   = bool(st.session_state.last_market)
+_market_ttl    = 600 if _have_market else 60   # retry faster when we have no data at all
+_market_stale  = (_now - st.session_state.market_fetched_at) >= _market_ttl
 if _market_stale:
     _all_ids = tuple(list(st.session_state.holdings.keys()) + st.session_state.watchlist)
     with st.spinner("📡 Loading market prices…"):
@@ -1358,8 +1360,8 @@ if _market_stale:
     if _mr:
         st.session_state.last_market = _mr
         _need_rerun = True                        # only rerun when we actually got fresh data
-    elif not st.session_state.last_market:
-        st.warning("⚠️ Could not load price data (CoinGecko rate limit). Will retry in 10 min.", icon="⏳")
+    elif not _have_market:
+        st.warning("⚠️ Could not load price data (CoinGecko rate limit). Retrying…", icon="⏳")
 
 # Fear & Greed — refresh every 1 hr
 _fg_stale = (st.session_state.last_fg[0] is None or
