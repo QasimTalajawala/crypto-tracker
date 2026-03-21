@@ -10,6 +10,15 @@ from datetime import datetime
 
 st.set_page_config(page_title="Crypto Tracker", page_icon="📈", layout="wide")
 
+# ── Optional CoinGecko Demo API key (free at coingecko.com/api) ──────────────
+# Without a key, Streamlit Cloud's shared IPs are frequently rate-limited.
+# Set COINGECKO_API_KEY in Streamlit Cloud → App Settings → Secrets to fix this.
+try:
+    _CG_KEY = st.secrets.get("COINGECKO_API_KEY", "")
+except Exception:
+    _CG_KEY = ""
+_CG_HEADERS = {"x-cg-demo-api-key": _CG_KEY} if _CG_KEY else {}
+
 # ── Default Holdings ────────────────────────────────────────────────────────
 DEFAULT_HOLDINGS = {
     "bitcoin":     {"symbol": "BTC",    "name": "Bitcoin",   "qty": 0.00477973,  "buy_price": round(356.08   / 0.00477973,  2)},
@@ -280,8 +289,9 @@ def _get_with_retry(url, timeout=10, retries=3):
     return r
 
 def fetch_market_data(coin_ids: tuple):
-    # No @st.cache_data here — session_state manages the TTL so failed
+    # No @st.cache_data — session_state manages the TTL so failed
     # (rate-limited) calls are never cached and always retried on next trigger.
+    # _CG_HEADERS carries the Demo API key if the user has set it in Streamlit secrets.
     ids_str = ",".join(coin_ids)
     url = (
         "https://api.coingecko.com/api/v3/coins/markets"
@@ -290,7 +300,7 @@ def fetch_market_data(coin_ids: tuple):
         "&price_change_percentage=7d,30d&sparkline=false"
     )
     try:
-        r = requests.get(url, timeout=5)
+        r = requests.get(url, timeout=8, headers=_CG_HEADERS)
         if r.status_code != 200:
             return None
         return {c["id"]: c for c in r.json()}
@@ -315,7 +325,7 @@ def fetch_rsi(coin_id: str, days: int = 60):
         f"?vs_currency=usd&days={days}&interval=daily"
     )
     try:
-        r = requests.get(url, timeout=4)
+        r = requests.get(url, timeout=8, headers=_CG_HEADERS)
         if r.status_code != 200:
             return None
         prices = [p[1] for p in r.json().get("prices", [])]
@@ -1361,7 +1371,8 @@ if _market_stale:
         st.session_state.last_market = _mr
         _need_rerun = True                        # only rerun when we actually got fresh data
     elif not _have_market:
-        st.warning("⚠️ Could not load price data (CoinGecko rate limit). Retrying…", icon="⏳")
+        _key_hint = "" if _CG_KEY else " Add a free CoinGecko Demo API key in Streamlit → Settings → Secrets (`COINGECKO_API_KEY`) to fix this."
+        st.warning(f"⚠️ Could not load price data (CoinGecko rate limit).{_key_hint} Retrying in ~60s…", icon="⏳")
 
 # Fear & Greed — refresh every 1 hr
 _fg_stale = (st.session_state.last_fg[0] is None or
