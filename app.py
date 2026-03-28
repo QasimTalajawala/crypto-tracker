@@ -1153,7 +1153,7 @@ The model assesses each coin's investment merit — Tier 4 coins receive **no fu
             "Vol/MCap %":  f"{m['vol_mcap']:.1f}%" if m["vol_mcap"] else "—",
             "ATH":         fmt_price(m["ath"]),
             "From ATH":    f"{m['ath_pct']:.0f}%" if m["ath_pct"] else "—",
-            "7d %":        f"{md.get('price_change_percentage_7d_in_currency', 0):+.1f}%",
+            "7d %":        f"{md.get('price_change_percentage_7d_in_currency') or 0:+.1f}%",
             "30d %":       f"{m['ch30']:+.1f}%" if m["ch30"] else "—",
             "RSI":         f"{m['rsi']}" if m["rsi"] else "—",
         })
@@ -1255,7 +1255,7 @@ with tab4:
                 "Price":      fmt_price(cp),
                 "Market Cap": f"${mc/1e9:.1f}B" if mc else "—",
                 "From ATH":   f"{ath_pct:.0f}%" if ath_pct else "—",
-                "7d %":       f"{md.get('price_change_percentage_7d_in_currency', 0):+.1f}%",
+                "7d %":       f"{md.get('price_change_percentage_7d_in_currency') or 0:+.1f}%",
                 "RSI":        f"{rsi}" if rsi else "—",
                 "Signal":     signal,
             })
