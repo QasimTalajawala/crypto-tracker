@@ -1381,12 +1381,120 @@ with tab5:
             else:
                 st.markdown("_No sell signals at this time. Price, sentiment, and gains are all within normal range._")
 
+            # Proceeds advice for non-Hold coins
+            if sell_sc > 0:
+                redeploy_targets = [
+                    m2["info"]["symbol"]
+                    for c2, m2 in coin_metrics.items()
+                    if c2 != cid and m2["signal"] in ("Strong Buy", "Buy")
+                ]
+                if fg_value is not None and fg_value > 75:
+                    proceeds_note = (
+                        "Market is in Extreme Greed — **hold proceeds as USDT**. "
+                        "Do not reinvest into a euphoric market. Set buy alerts 20–30% lower "
+                        "and redeploy on the next fear spike."
+                    )
+                elif fg_value is not None and fg_value > 60:
+                    targets_str = ", ".join(redeploy_targets[:3]) if redeploy_targets else "your strongest-conviction holdings"
+                    proceeds_note = (
+                        f"Market is hot — hold most proceeds as USDT. "
+                        f"Only add small amounts back into your highest-conviction holdings "
+                        f"({targets_str}) if they dip."
+                    )
+                elif fg_value is not None and fg_value < 25:
+                    targets_str = ", ".join(redeploy_targets[:3]) if redeploy_targets else "BTC or ETH"
+                    proceeds_note = (
+                        f"Market is in Extreme Fear — a good time to redeploy quickly. "
+                        f"Best targets in your portfolio: **{targets_str}**."
+                    )
+                else:
+                    if tier_score <= 1 and redeploy_targets:
+                        targets_str = ", ".join(redeploy_targets[:3])
+                        proceeds_note = (
+                            f"This is a lower-conviction coin. Consider redeploying into "
+                            f"**{targets_str}** to upgrade portfolio quality. "
+                            "Wait for a minor dip for a better entry."
+                        )
+                    elif redeploy_targets:
+                        targets_str = ", ".join(redeploy_targets[:3])
+                        proceeds_note = (
+                            f"Hold as USDT and wait for a fear spike or a 10–15% dip. "
+                            f"Best redeployment candidates: **{targets_str}**."
+                        )
+                    else:
+                        proceeds_note = (
+                            "Hold proceeds as USDT — no coins in your portfolio are currently "
+                            "rated Buy or Strong Buy. Reinvest when signals improve."
+                        )
+                st.markdown(f"**What to do with proceeds:** {proceeds_note}")
+
             # Guidance note for "Hold" coins
             if sell_sc == 0:
                 st.caption(
                     "Nothing to act on right now. Check back when: price approaches ATH, "
                     "Fear & Greed enters Greed/Extreme Greed, or your P&L exceeds 50%+."
                 )
+
+    # ── Proceeds & Redeployment Plan ──────────────────────────────────────────
+    _sell_fracs = {"~25%": 0.25, "~50%": 0.50, "50–75%": 0.625, "100%": 1.0}
+    _proceed_items = [
+        (m["info"]["symbol"],
+         (m["cp"] or 0) * m["info"]["qty"] * _sell_fracs.get(m["sell_pct"], 0),
+         m["sell_action"])
+        for _, m in sorted_coins
+        if m["sell_score"] > 0
+    ]
+    _total_usdt = sum(p for _, p, _ in _proceed_items)
+
+    if _proceed_items:
+        st.divider()
+        st.subheader("💰 Estimated Proceeds & Redeployment Plan")
+        st.caption(
+            "Approximate USDT you'd receive if you followed every sell recommendation above. "
+            "Estimates use current price × qty × suggested sell fraction."
+        )
+
+        _pcols = st.columns(len(_proceed_items) + 1)
+        for i, (sym, proc, action) in enumerate(_proceed_items):
+            _pcols[i].metric(sym, f"~${proc:,.0f}", help=action)
+        _pcols[-1].metric("Total USDT", f"~${_total_usdt:,.0f}")
+
+        # Best buy targets = coins rated Buy/Strong Buy that have no sell signal
+        _best_buys = [
+            m2["info"]["symbol"]
+            for _, m2 in sorted_coins
+            if m2["signal"] in ("Strong Buy", "Buy") and m2["sell_score"] == 0
+        ]
+        _targets_str = ", ".join(_best_buys[:3]) if _best_buys else "BTC or ETH"
+
+        if fg_value is not None and fg_value > 75:
+            st.error(
+                f"**Do not reinvest yet.** Fear & Greed is {fg_value} (Extreme Greed). "
+                "Holding USDT through a euphoric market is the right move. "
+                "Set buy alerts 20–30% lower and redeploy on the next fear spike.",
+                icon="🔴"
+            )
+        elif fg_value is not None and fg_value > 60:
+            st.warning(
+                f"**Hold most proceeds (F&G {fg_value} — Greed).** Keep the majority as USDT. "
+                f"If you redeploy, add only small amounts to your highest-conviction holdings "
+                f"({_targets_str}) on dips — do not chase a hot market.",
+                icon="🟡"
+            )
+        elif fg_value is not None and fg_value < 25:
+            st.success(
+                f"**Redeploy now — Extreme Fear (F&G {fg_value}).** "
+                "Fear markets are the best long-term entries — do not let the proceeds sit idle. "
+                f"Best targets from your portfolio: **{_targets_str}**.",
+                icon="🟢"
+            )
+        else:
+            st.info(
+                f"**No rush to reinvest (F&G {fg_value if fg_value is not None else '—'} — Neutral).** "
+                "Hold as USDT and wait for a fear spike or a 10–15% dip for a better entry. "
+                f"Best candidates when you're ready: **{_targets_str}**.",
+                icon="ℹ️"
+            )
 
     # ── What to watch for ─────────────────────────────────────────────────────
     st.divider()
